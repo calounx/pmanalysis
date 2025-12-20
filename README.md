@@ -33,6 +33,14 @@ A production-grade system health monitoring script that provides comprehensive i
 - Component-specific scoring with automatic aggregation
 - Exit codes aligned with monitoring best practices
 
+### Root Cause Analysis (NEW)
+- **Automatic correlation** of performance degradation with system changes
+- **Change detection**: Tracks package installs/upgrades, config modifications, service restarts
+- **Historical tracking**: Monitors score trends to identify degradation patterns
+- **Smart diagnosis**: Links score drops to recent changes (packages, configs, services)
+- **Actionable recommendations**: Context-specific guidance based on detected changes
+- **24-hour lookback**: Analyzes changes in the last 24 hours to find likely culprits
+
 ### Multiple Output Formats
 - **JSON**: Machine-readable for automation and integrations
 - **Markdown**: Human-readable reports with emojis and formatting
@@ -256,7 +264,11 @@ health-check --version
   ],
   "recommendations": [
     "Consider disabling swap or adding RAM"
-  ]
+  ],
+  "root_cause_analysis": {
+    "enabled": false,
+    "reason": "No significant score degradation detected"
+  }
 }
 ```
 
@@ -294,6 +306,55 @@ None
 ## 💡 Recommendations
 1. Consider disabling swap or adding RAM
 ```
+
+### Root Cause Analysis Output (When Triggered)
+
+When the health score drops by 5+ points, RCA automatically activates:
+
+```markdown
+## 🔍 Root Cause Analysis
+
+### Performance Degradation Detected
+- Previous Score: 95/100
+- Current Score: 85/100
+- Drop: 10 points (-10.5%)
+
+### Diagnosis
+**Performance degraded after package update(s) and configuration change(s)**
+
+Suspicion: Package: nginx, Config: /etc/nginx/nginx.conf
+
+### Recent System Changes (Last 24 hours)
+
+**Package Updates:**
+- 2025-12-20 14:23:15: package_upgrade - nginx (1.22.1 → 1.24.0)
+- 2025-12-20 14:23:18: package_install - nginx-extras
+
+**Configuration Changes:**
+- 2025-12-20T14:25:32+00:00: /etc/nginx/nginx.conf
+- 2025-12-20T14:25:35+00:00: /etc/nginx/sites-available/default
+
+**Service Restarts:**
+- 2025-12-20T14:26:12+00:00: nginx.service (restart)
+
+### Recommended Actions
+1. Review recently updated packages for known issues
+2. Consider rolling back suspect package updates
+3. Review recent configuration changes
+4. Compare current config with previous versions
+```
+
+**How RCA Works:**
+1. **Score Tracking**: Each run saves the health score to `/var/lib/health-check/history.json`
+2. **Change Detection**: Monitors package logs, config file modifications, and service restarts
+3. **Correlation**: Links score drops to changes within the same time window
+4. **Diagnosis**: Provides context-specific analysis and recommendations
+
+**RCA Configuration:**
+- **Trigger Threshold**: Score drop ≥ 5 points
+- **Lookback Window**: 24 hours
+- **History Retention**: Last 100 scores
+- **Storage**: `/var/lib/health-check/` (auto-created, gracefully degrades if unwritable)
 
 ## 🔧 Integration Examples
 
@@ -455,6 +516,27 @@ readonly NETWORK_WEIGHT=10
 readonly SERVICES_WEIGHT=20
 ```
 
+### Root Cause Analysis Settings
+
+Customize RCA behavior by editing these constants:
+
+```bash
+# Root Cause Analysis
+readonly RCA_HISTORY_DIR="/var/lib/health-check"
+readonly RCA_HISTORY_FILE="$RCA_HISTORY_DIR/history.json"
+readonly RCA_LOOKBACK_HOURS=24
+
+# RCA triggers when score drops by this amount
+# Set to 0 to always enable RCA, or higher value (e.g., 10) to reduce noise
+SCORE_DROP_THRESHOLD=5  # Default: 5 points
+```
+
+**Notes:**
+- RCA requires write permission to `/var/lib/health-check/`
+- If directory creation fails, RCA gracefully degrades (no errors)
+- History file stores last 100 score entries (circular buffer)
+- Change detection parses `/var/log/dpkg.log`, `/etc` mtime, and `journalctl`
+
 ## 🐛 Troubleshooting
 
 ### "Missing required commands" Error
@@ -513,6 +595,52 @@ ps aux | grep health-check
 
 # Kill if necessary
 killall health-check.sh
+```
+
+### RCA Not Showing in Output
+
+**Problem**: Root Cause Analysis section missing from reports
+
+**Possible Reasons**:
+1. No score degradation (RCA only triggers on 5+ point drop)
+2. First run (no previous score in history)
+3. Score improved instead of degraded
+
+**Solution**: Check JSON output for RCA status:
+```bash
+./health-check.sh --json | jq '.root_cause_analysis'
+
+# Example when RCA is disabled:
+# {
+#   "enabled": false,
+#   "reason": "No significant score degradation detected"
+# }
+```
+
+**To test RCA manually**:
+```bash
+# Create history directory
+sudo mkdir -p /var/lib/health-check
+sudo chown $USER:$USER /var/lib/health-check
+
+# Simulate a previous high score
+echo '[{"timestamp":"2025-12-20T10:00:00+00:00","score":95}]' > /var/lib/health-check/history.json
+
+# Make a change (install package, modify config, etc.)
+sudo apt install tree
+
+# Run health check - RCA may trigger if score drops
+./health-check.sh
+```
+
+### RCA History File Permission Denied
+
+**Problem**: Cannot write to `/var/lib/health-check/`
+
+**Solution**: RCA gracefully degrades if it can't write history. To enable full RCA:
+```bash
+sudo mkdir -p /var/lib/health-check
+sudo chown $USER:$USER /var/lib/health-check
 ```
 
 ## 📈 Performance

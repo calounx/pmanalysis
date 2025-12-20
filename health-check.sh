@@ -82,6 +82,11 @@ declare -a ALERTS=()
 declare -a RECOMMENDATIONS=()
 declare -a COLLECTION_ERRORS=()
 
+# Root Cause Analysis
+readonly RCA_HISTORY_DIR="/var/lib/health-check"
+readonly RCA_HISTORY_FILE="$RCA_HISTORY_DIR/history.json"
+readonly RCA_LOOKBACK_HOURS=24
+
 # Output format (default: markdown)
 OUTPUT_FORMAT="markdown"
 OUTPUT_FILE=""
@@ -946,7 +951,7 @@ deduplicate_recommendations() {
 
 generate_json_output() {
     local timestamp hostname status score
-    local cpu_json mem_json disk_json net_json svc_json
+    local cpu_json mem_json disk_json net_json svc_json rca_json
 
     timestamp="$1"
     hostname="$2"
@@ -957,6 +962,7 @@ generate_json_output() {
     disk_json="$7"
     net_json="$8"
     svc_json="$9"
+    rca_json="${10}"
 
     # S8: Deduplicate recommendations before output
     deduplicate_recommendations
@@ -987,6 +993,7 @@ generate_json_output() {
         --argjson svc "$svc_json" \
         --argjson alerts "$alerts_json" \
         --argjson recs "$recs_json" \
+        --argjson rca "$rca_json" \
         '{
             schema_version: "1.0.0",
             script_version: $ver,
@@ -1002,7 +1009,8 @@ generate_json_output() {
                 services: $svc
             },
             alerts: $alerts,
-            recommendations: $recs
+            recommendations: $recs,
+            root_cause_analysis: $rca
         }'
 }
 
@@ -1076,6 +1084,75 @@ generate_markdown_output() {
     echo "$json_output" | jq -r '"- Zombie Processes: " + (.metrics.services.zombie_processes|tostring)'
     echo ""
 
+    # Root Cause Analysis
+    local rca_enabled
+    rca_enabled=$(echo "$json_output" | jq -r '.root_cause_analysis.enabled // false')
+    if [[ "$rca_enabled" == "true" ]]; then
+        echo "## 🔍 Root Cause Analysis"
+        echo ""
+
+        # Score change
+        echo "### Performance Degradation Detected"
+        echo "$json_output" | jq -r '"- Previous Score: " + (.root_cause_analysis.score_change.previous|tostring) + "/100"'
+        echo "$json_output" | jq -r '"- Current Score: " + (.root_cause_analysis.score_change.current|tostring) + "/100"'
+        echo "$json_output" | jq -r '"- Drop: " + (.root_cause_analysis.score_change.drop|tostring) + " points (-" + (.root_cause_analysis.score_change.drop_percent|tostring) + "%)"'
+        echo ""
+
+        # Diagnosis
+        echo "### Diagnosis"
+        echo "$json_output" | jq -r '"**" + .root_cause_analysis.diagnosis + "**"'
+        echo ""
+        echo "$json_output" | jq -r '"Suspicion: " + .root_cause_analysis.suspicion'
+        echo ""
+
+        # Recent changes
+        local total_changes
+        total_changes=$(echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.total')
+        if [[ $total_changes -gt 0 ]]; then
+            echo "### Recent System Changes (Last $RCA_LOOKBACK_HOURS hours)"
+
+            # Package changes
+            local pkg_count
+            pkg_count=$(echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.packages | length')
+            if [[ $pkg_count -gt 0 ]]; then
+                echo ""
+                echo "**Package Updates:**"
+                echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.packages[] | "- " + .timestamp + ": " + .type + " - " + .package'
+            fi
+
+            # Config changes
+            local cfg_count
+            cfg_count=$(echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.configs | length')
+            if [[ $cfg_count -gt 0 ]]; then
+                echo ""
+                echo "**Configuration Changes:**"
+                echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.configs[] | "- " + .timestamp + ": " + .file' | head -n 10
+                if [[ $cfg_count -gt 10 ]]; then
+                    echo "- ... and $((cfg_count - 10)) more files"
+                fi
+            fi
+
+            # Service changes
+            local svc_count
+            svc_count=$(echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.services | length')
+            if [[ $svc_count -gt 0 ]]; then
+                echo ""
+                echo "**Service Restarts:**"
+                echo "$json_output" | jq -r '.root_cause_analysis.recent_changes.services[] | "- " + .timestamp + ": " + .service + " (" + .type + ")"'
+            fi
+            echo ""
+        fi
+
+        # RCA Recommendations
+        local rca_recs
+        rca_recs=$(echo "$json_output" | jq -r '.root_cause_analysis.recommendations | length')
+        if [[ $rca_recs -gt 0 ]]; then
+            echo "### Recommended Actions"
+            echo "$json_output" | jq -r '.root_cause_analysis.recommendations[] | "1. " + .'
+            echo ""
+        fi
+    fi
+
     # Recommendations
     local recs
     recs=$(echo "$json_output" | jq -r '.recommendations | length')
@@ -1123,6 +1200,286 @@ EXAMPLES:
     ./$SCRIPT_NAME --quiet || alert-team "Health check failed"
 
 EOF
+}
+
+#######################################
+# Root Cause Analysis - Change Detection
+#######################################
+
+#######################################
+# Collect recent package changes from dpkg log
+# Returns: JSON array of package changes
+#######################################
+collect_package_changes() {
+    local cutoff_time lookback_seconds
+    lookback_seconds=$((RCA_LOOKBACK_HOURS * 3600))
+    cutoff_time=$(date -d "@$(($(date +%s) - lookback_seconds))" '+%Y-%m-%d %H:%M:%S')
+
+    local changes=()
+
+    # Parse dpkg.log for installs, upgrades, removes
+    if [[ -f /var/log/dpkg.log ]]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}\ [0-9]{2}:[0-9]{2}:[0-9]{2})\ (install|upgrade|remove)\ ([^:]+):?([^\ ]*)?\ (.+)$ ]]; then
+                local timestamp="${BASH_REMATCH[1]}"
+                local action="${BASH_REMATCH[2]}"
+                local package="${BASH_REMATCH[3]}"
+                local arch="${BASH_REMATCH[4]}"
+                local versions="${BASH_REMATCH[5]}"
+
+                # Only include changes within lookback window
+                if [[ "$timestamp" > "$cutoff_time" ]]; then
+                    changes+=("$(jq -nc \
+                        --arg ts "$timestamp" \
+                        --arg act "$action" \
+                        --arg pkg "$package" \
+                        --arg ver "$versions" \
+                        '{timestamp: $ts, type: "package_\($act)", package: $pkg, details: $ver}')")
+                fi
+            fi
+        done < /var/log/dpkg.log
+    fi
+
+    # Combine into JSON array
+    if [[ ${#changes[@]} -eq 0 ]]; then
+        echo "[]"
+    else
+        printf '%s\n' "${changes[@]}" | jq -s '.'
+    fi
+}
+
+#######################################
+# Collect recent configuration file changes in /etc
+# Returns: JSON array of file modifications
+#######################################
+collect_config_changes() {
+    local lookback_minutes
+    lookback_minutes=$((RCA_LOOKBACK_HOURS * 60))
+
+    local changes=()
+
+    # Find recently modified files in /etc
+    while IFS= read -r file; do
+        if [[ -f "$file" ]]; then
+            local mtime
+            mtime=$(stat -c '%Y' "$file" 2>/dev/null || echo "0")
+            local mtime_human
+            mtime_human=$(date -d "@$mtime" -Iseconds 2>/dev/null || echo "unknown")
+
+            changes+=("$(jq -nc \
+                --arg ts "$mtime_human" \
+                --arg f "$file" \
+                '{timestamp: $ts, type: "config_change", file: $f}')")
+        fi
+    done < <(find /etc -type f -mmin "-$lookback_minutes" 2>/dev/null | head -n 50)
+
+    # Combine into JSON array
+    if [[ ${#changes[@]} -eq 0 ]]; then
+        echo "[]"
+    else
+        printf '%s\n' "${changes[@]}" | jq -s '.'
+    fi
+}
+
+#######################################
+# Collect recent service restarts from systemd journal
+# Returns: JSON array of service changes
+#######################################
+collect_service_changes() {
+    local lookback_seconds
+    lookback_seconds=$((RCA_LOOKBACK_HOURS * 3600))
+
+    local changes=()
+
+    # Query systemd journal for service restarts
+    if command -v journalctl &>/dev/null; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^([^\ ]+)\ ([0-9]{2}:[0-9]{2}:[0-9]{2}).*Started\ (.+)\.$ ]] || \
+               [[ "$line" =~ ^([^\ ]+)\ ([0-9]{2}:[0-9]{2}:[0-9]{2}).*Stopped\ (.+)\.$ ]]; then
+                local date="${BASH_REMATCH[1]}"
+                local time="${BASH_REMATCH[2]}"
+                local service="${BASH_REMATCH[3]}"
+                local action="restart"
+
+                [[ "$line" =~ Stopped ]] && action="stop"
+                [[ "$line" =~ Started ]] && action="start"
+
+                # Convert to ISO timestamp
+                local timestamp
+                timestamp=$(date -d "$date $time" -Iseconds 2>/dev/null || echo "unknown")
+
+                changes+=("$(jq -nc \
+                    --arg ts "$timestamp" \
+                    --arg svc "$service" \
+                    --arg act "$action" \
+                    '{timestamp: $ts, type: "service_\($act)", service: $svc}')")
+            fi
+        done < <(journalctl --since "${lookback_seconds} seconds ago" --no-pager 2>/dev/null | grep -E "Started |Stopped " | tail -n 20)
+    fi
+
+    # Combine into JSON array
+    if [[ ${#changes[@]} -eq 0 ]]; then
+        echo "[]"
+    else
+        printf '%s\n' "${changes[@]}" | jq -s '.'
+    fi
+}
+
+#######################################
+# Load previous health score from history
+# Returns: Previous score or empty string if no history
+#######################################
+load_previous_score() {
+    if [[ -f "$RCA_HISTORY_FILE" ]]; then
+        jq -r '.[-1].score // empty' "$RCA_HISTORY_FILE" 2>/dev/null || echo ""
+    else
+        echo ""
+    fi
+}
+
+#######################################
+# Save current health score to history
+# Args: $1 = timestamp, $2 = score
+#######################################
+save_health_score() {
+    local timestamp="$1"
+    local score="$2"
+
+    # Create directory if it doesn't exist
+    if [[ ! -d "$RCA_HISTORY_DIR" ]]; then
+        mkdir -p "$RCA_HISTORY_DIR" 2>/dev/null || return 0
+    fi
+
+    # Initialize history file if it doesn't exist
+    if [[ ! -f "$RCA_HISTORY_FILE" ]]; then
+        echo "[]" > "$RCA_HISTORY_FILE" 2>/dev/null || return 0
+    fi
+
+    # Append new entry
+    local new_entry
+    new_entry=$(jq -nc \
+        --arg ts "$timestamp" \
+        --arg sc "$score" \
+        '{timestamp: $ts, score: ($sc | tonumber)}')
+
+    # Keep only last 100 entries
+    jq --argjson entry "$new_entry" '. += [$entry] | .[-100:]' "$RCA_HISTORY_FILE" > "${RCA_HISTORY_FILE}.tmp" 2>/dev/null && \
+        mv "${RCA_HISTORY_FILE}.tmp" "$RCA_HISTORY_FILE" 2>/dev/null || true
+}
+
+#######################################
+# Perform root cause analysis
+# Args: $1 = current_score, $2 = previous_score
+# Returns: JSON object with RCA results
+#######################################
+perform_root_cause_analysis() {
+    local current_score="$1"
+    local previous_score="$2"
+
+    # If no previous score or no significant change, return minimal RCA
+    if [[ -z "$previous_score" ]] || (( $(echo "$current_score >= $previous_score - 5" | bc -l) )); then
+        jq -nc '{
+            enabled: false,
+            reason: "No significant score degradation detected"
+        }'
+        return 0
+    fi
+
+    # Calculate score drop
+    local score_drop
+    score_drop=$(echo "$previous_score - $current_score" | bc)
+    local drop_percent
+    drop_percent=$(echo "scale=1; ($score_drop / $previous_score) * 100" | bc)
+
+    log_info "Performance degradation detected: $previous_score → $current_score (-${drop_percent}%)"
+    log_info "Collecting change history for root cause analysis..."
+
+    # Collect all changes
+    local package_changes config_changes service_changes
+    package_changes=$(collect_package_changes)
+    config_changes=$(collect_config_changes)
+    service_changes=$(collect_service_changes)
+
+    # Count changes
+    local pkg_count cfg_count svc_count
+    pkg_count=$(echo "$package_changes" | jq 'length')
+    cfg_count=$(echo "$config_changes" | jq 'length')
+    svc_count=$(echo "$service_changes" | jq 'length')
+
+    # Determine most likely cause
+    local diagnosis=""
+    local suspicion=""
+
+    if [[ $pkg_count -gt 0 ]] && [[ $cfg_count -gt 0 ]]; then
+        diagnosis="Performance degraded after package update(s) and configuration change(s)"
+        suspicion="Package: $(echo "$package_changes" | jq -r '.[0].package // "unknown"'), Config: $(echo "$config_changes" | jq -r '.[0].file // "unknown"')"
+    elif [[ $pkg_count -gt 0 ]]; then
+        diagnosis="Performance degraded after package update(s)"
+        suspicion="Package: $(echo "$package_changes" | jq -r '.[0].package // "unknown"')"
+    elif [[ $cfg_count -gt 0 ]]; then
+        diagnosis="Performance degraded after configuration change(s)"
+        suspicion="Config: $(echo "$config_changes" | jq -r '.[0].file // "unknown"')"
+    elif [[ $svc_count -gt 0 ]]; then
+        diagnosis="Performance degraded around service restart(s)"
+        suspicion="Service: $(echo "$service_changes" | jq -r '.[0].service // "unknown"')"
+    else
+        diagnosis="Performance degraded but no recent system changes detected"
+        suspicion="May be external factors (load increase, resource contention)"
+    fi
+
+    # Generate recommendations
+    local recommendations=()
+
+    if [[ $pkg_count -gt 0 ]]; then
+        recommendations+=("Review recently updated packages for known issues")
+        recommendations+=("Consider rolling back suspect package updates")
+    fi
+
+    if [[ $cfg_count -gt 0 ]]; then
+        recommendations+=("Review recent configuration changes")
+        recommendations+=("Compare current config with previous versions")
+    fi
+
+    if [[ $svc_count -gt 0 ]]; then
+        recommendations+=("Check service logs for errors after restart")
+        recommendations+=("Verify service configuration is correct")
+    fi
+
+    if [[ ${#recommendations[@]} -eq 0 ]]; then
+        recommendations+=("Investigate resource usage trends")
+        recommendations+=("Check for external load increases")
+    fi
+
+    # Build RCA JSON
+    jq -nc \
+        --arg prev "$previous_score" \
+        --arg curr "$current_score" \
+        --arg drop "$score_drop" \
+        --arg drop_pct "$drop_percent" \
+        --arg diag "$diagnosis" \
+        --arg susp "$suspicion" \
+        --argjson pkgs "$package_changes" \
+        --argjson cfgs "$config_changes" \
+        --argjson svcs "$service_changes" \
+        --argjson recs "$(printf '%s\n' "${recommendations[@]}" | jq -R . | jq -s .)" \
+        '{
+            enabled: true,
+            score_change: {
+                previous: ($prev | tonumber),
+                current: ($curr | tonumber),
+                drop: ($drop | tonumber),
+                drop_percent: ($drop_pct | tonumber)
+            },
+            recent_changes: {
+                packages: $pkgs,
+                configs: $cfgs,
+                services: $svcs,
+                total: (($pkgs | length) + ($cfgs | length) + ($svcs | length))
+            },
+            diagnosis: $diag,
+            suspicion: $susp,
+            recommendations: $recs
+        }'
 }
 
 #######################################
@@ -1245,6 +1602,15 @@ main() {
     timestamp=$(date -Iseconds)
     hostname=$(hostname)
 
+    # Root Cause Analysis
+    log_info "Performing root cause analysis..."
+    local previous_score rca_json
+    previous_score=$(load_previous_score)
+    rca_json=$(perform_root_cause_analysis "$health_score" "$previous_score")
+
+    # Save current score for future RCA
+    save_health_score "$timestamp" "$health_score"
+
     # Score-only mode
     if [[ "$SCORE_ONLY" == "true" ]]; then
         echo "$health_score"
@@ -1254,7 +1620,7 @@ main() {
     # Generate JSON
     local json_output
     json_output=$(generate_json_output "$timestamp" "$hostname" "$health_status" "$health_score" \
-        "$cpu_json" "$mem_json" "$disk_json" "$net_json" "$svc_json")
+        "$cpu_json" "$mem_json" "$disk_json" "$net_json" "$svc_json" "$rca_json")
 
     # Output based on format
     local output
