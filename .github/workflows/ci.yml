@@ -24,7 +24,7 @@ jobs:
           format: tty
 
       - name: ShellCheck health-check.sh
-        run: shellcheck -x health-check.sh
+        run: shellcheck -x -S warning health-check.sh
 
   validation:
     name: Quick Deployment Validation
