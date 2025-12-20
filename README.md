@@ -142,20 +142,33 @@ Services: 100/100 (all healthy)       × 20% weight = 20.00
 curl -O https://raw.githubusercontent.com/calounx/pmanalysis/master/health-check.sh
 chmod +x health-check.sh
 
-# 2. Install dependencies
-sudo apt update
-sudo apt install -y jq bc sysstat
+# 2. Check prerequisites (automatic verification)
+./health-check.sh --check-prerequisites
 
-# 3. Configure sudo (replace 'youruser')
+# This will show you what's missing and provide installation commands
+# Example output:
+# ✅ All required prerequisites met!
+# OR
+# ❌ Missing: jq, bc
+#    Install with: sudo apt install -y jq bc
+
+# 3. Install missing dependencies (if needed)
+sudo apt update
+sudo apt install -y jq bc sysstat  # Add any missing packages
+
+# 4. Configure sudo (replace 'youruser')
 echo 'youruser ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl' | \
     sudo tee /etc/sudoers.d/health-check
 sudo chmod 0440 /etc/sudoers.d/health-check
 
-# 4. Create RCA directory
+# 5. Create RCA directory
 sudo mkdir -p /var/lib/health-check
 sudo chown $USER:$USER /var/lib/health-check
 
-# 5. Test!
+# 6. Verify everything is ready
+./health-check.sh --check-prerequisites
+
+# 7. Run your first health check!
 ./health-check.sh
 ```
 
@@ -372,13 +385,66 @@ RCA_THRESHOLD=5
 
 ## 🐛 Troubleshooting
 
+### Quick Diagnostics
+
+**Always start here** - Run the built-in prerequisite checker:
+
+```bash
+./health-check.sh --check-prerequisites
+```
+
+This will verify:
+- ✅ All required dependencies (jq, bc, awk, date, df, free, uptime, nproc)
+- ✅ Optional dependencies (iostat, lsof, netstat)
+- ✅ Sudo configuration (dmesg, journalctl)
+- ✅ RCA directory permissions
+
+**Example output when everything is OK:**
+```
+════════════════════════════════════════════════════════════
+  Health Check - Prerequisites Verification
+════════════════════════════════════════════════════════════
+
+Checking Required Dependencies:
+────────────────────────────────────────────────────────────
+  ✅ jq
+  ✅ bc
+  ✅ awk
+  ... (all pass)
+
+✅ All required prerequisites met!
+Ready to run: ./health-check.sh
+```
+
+**Example output with issues:**
+```
+Checking Required Dependencies:
+────────────────────────────────────────────────────────────
+  ✅ awk
+  ❌ jq - MISSING
+  ❌ bc - MISSING
+
+⚠️  Missing Dependencies Detected
+
+Install missing packages with:
+  sudo apt update
+  sudo apt install -y jq bc
+```
+
 ### Common Issues
 
 **"Missing required commands"**
+
+Don't manually install - use the prerequisite checker:
 ```bash
-# Install dependencies
+# It will tell you exactly what to install
+./health-check.sh --check-prerequisites
+```
+
+Or install everything at once:
+```bash
 sudo apt update
-sudo apt install -y jq bc procps coreutils sysstat
+sudo apt install -y jq bc procps coreutils sysstat lsof net-tools
 ```
 
 **"Cannot run sudo dmesg"**

@@ -1164,6 +1164,142 @@ generate_markdown_output() {
 }
 
 #######################################
+# Check Prerequisites
+# Verifies all required dependencies and configurations
+#######################################
+
+check_prerequisites() {
+    # Temporarily disable errexit for checks
+    set +e
+
+    local auto_install="${1:-false}"
+    local -i pass_count=0 fail_count=0
+
+    echo "════════════════════════════════════════════════════════════"
+    echo "  Health Check - Prerequisites Verification"
+    echo "════════════════════════════════════════════════════════════"
+    echo ""
+
+    # Check required commands
+    echo "Checking Required Dependencies:"
+    echo "────────────────────────────────────────────────────────────"
+
+    local -a missing_apt=()
+
+    for cmd in "${REQUIRED_COMMANDS[@]}"; do
+        if command -v "$cmd" &>/dev/null; then
+            echo "  ✅ $cmd"
+            ((pass_count++)) || true
+        else
+            echo "  ❌ $cmd - MISSING"
+            ((fail_count++)) || true
+
+            case "$cmd" in
+                jq) missing_apt+=("jq") ;;
+                bc) missing_apt+=("bc") ;;
+                awk|date|df|nproc) missing_apt+=("coreutils") ;;
+                free|uptime) missing_apt+=("procps") ;;
+            esac
+        fi
+    done
+
+    echo ""
+
+    # Check optional commands
+    echo "Checking Optional Dependencies:"
+    echo "────────────────────────────────────────────────────────────"
+
+    for cmd in "${OPTIONAL_COMMANDS[@]}"; do
+        if command -v "$cmd" &>/dev/null; then
+            echo "  ✅ $cmd"
+        else
+            echo "  ⚠️  $cmd - missing (optional)"
+        fi
+    done
+
+    echo ""
+
+    # Check sudo configuration
+    echo "Checking Sudo Configuration:"
+    echo "────────────────────────────────────────────────────────────"
+
+    if timeout 2 sudo -n true &>/dev/null 2>&1; then
+        if timeout 2 sudo -n dmesg --help &>/dev/null 2>&1; then
+            echo "  ✅ sudo dmesg"
+        else
+            echo "  ⚠️  sudo dmesg - not configured (OOM detection unavailable)"
+        fi
+
+        if timeout 2 sudo -n journalctl --version &>/dev/null 2>&1; then
+            echo "  ✅ sudo journalctl"
+        else
+            echo "  ⚠️  sudo journalctl - not configured"
+        fi
+    else
+        echo "  ⚠️  sudo - not configured (passwordless sudo required)"
+    fi
+
+    echo ""
+
+    # Check RCA directory
+    echo "Checking RCA Configuration:"
+    echo "────────────────────────────────────────────────────────────"
+
+    if [[ -d "$RCA_HISTORY_DIR" ]]; then
+        if [[ -w "$RCA_HISTORY_DIR" ]]; then
+            echo "  ✅ $RCA_HISTORY_DIR (writable)"
+        else
+            echo "  ⚠️  $RCA_HISTORY_DIR (not writable - RCA degraded)"
+        fi
+    else
+        echo "  ⚠️  $RCA_HISTORY_DIR (missing - RCA degraded)"
+    fi
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════"
+    echo "  Summary: $pass_count passed, $fail_count failed"
+    echo "════════════════════════════════════════════════════════════"
+    echo ""
+
+    if [[ $fail_count -gt 0 ]]; then
+        echo "⚠️  Missing Dependencies Detected"
+        echo ""
+
+        if [[ ${#missing_apt[@]} -gt 0 ]]; then
+            # Deduplicate packages
+            local -a unique_packages=($(printf '%s\n' "${missing_apt[@]}" | sort -u))
+
+            echo "Install missing packages with:"
+            echo "  sudo apt update"
+            echo "  sudo apt install -y ${unique_packages[*]}"
+            echo ""
+        fi
+
+        echo "Configure sudo with:"
+        echo "  echo '$USER ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl' | \\"
+        echo "    sudo tee /etc/sudoers.d/health-check"
+        echo "  sudo chmod 0440 /etc/sudoers.d/health-check"
+        echo ""
+
+        echo "Create RCA directory with:"
+        echo "  sudo mkdir -p $RCA_HISTORY_DIR"
+        echo "  sudo chown \$USER:\$USER $RCA_HISTORY_DIR"
+        echo ""
+
+        return 1
+    else
+        echo "✅ All required prerequisites met!"
+        echo ""
+        echo "Ready to run: ./$SCRIPT_NAME"
+        echo ""
+        set -e  # Re-enable errexit
+        return 0
+    fi
+
+    set -e  # Re-enable errexit
+}
+
+#######################################
 # Show help
 #######################################
 
@@ -1174,15 +1310,16 @@ Usage: $SCRIPT_NAME [OPTIONS]
 Production-grade system health analyzer for Debian 12
 
 OPTIONS:
-    -h, --help              Show this help message
-    -v, --version           Show version information
-    -q, --quiet             Suppress output (exit code only)
-    -j, --json              Output JSON only (no markdown)
-    -f, --format FORMAT     Output format: json|markdown
-    -o, --output FILE       Write output to file instead of stdout
-    -s, --score-only        Output health score only
-    --no-color              Disable colored output
-    --debug                 Enable debug logging
+    -h, --help                  Show this help message
+    -v, --version               Show version information
+    -q, --quiet                 Suppress output (exit code only)
+    -j, --json                  Output JSON only (no markdown)
+    -f, --format FORMAT         Output format: json|markdown
+    -o, --output FILE           Write output to file instead of stdout
+    -s, --score-only            Output health score only
+    --no-color                  Disable colored output
+    --debug                     Enable debug logging
+    --check-prerequisites       Verify all dependencies and configuration
 
 EXIT CODES:
     0   System healthy (score >= 80)
@@ -1532,6 +1669,11 @@ main() {
             --debug)
                 DEBUG_MODE=true
                 shift
+                ;;
+            --check-prerequisites)
+                trap - EXIT SIGTERM SIGINT  # Disable cleanup trap for check-prerequisites
+                check_prerequisites
+                exit $?
                 ;;
             *)
                 log_error "Unknown option: $1"
