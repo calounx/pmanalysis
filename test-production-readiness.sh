@@ -180,7 +180,7 @@ test_stress_scenarios() {
     print_result "INFO" "Testing rapid successive execution..."
 
     local success_count=0
-    for i in {1..5}; do
+    for _ in {1..5}; do
         if ./health-check.sh --quiet; then
             ((success_count++))
         fi
@@ -347,7 +347,7 @@ test_performance() {
     local total_time=0
     local iterations=5
 
-    for i in $(seq 1 $iterations); do
+    for _ in $(seq 1 $iterations); do
         local start_time end_time duration
         start_time=$(date +%s.%N)
         ./health-check.sh --quiet
