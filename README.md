@@ -1,96 +1,90 @@
 # 🏥 System Health Monitor
 
-> **Know exactly what's happening with your Debian servers - in seconds, not hours**
-
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/calounx/pmanalysis/releases)
-[![CI/CD](https://github.com/calounx/pmanalysis/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/calounx/pmanalysis/actions)
-[![Debian](https://img.shields.io/badge/debian-12%20bookworm-red.svg)](https://www.debian.org)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+> **Your Linux server's personal health assistant - diagnose issues in seconds, not hours**
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version 1.3.0"/>
+  <img src="https://img.shields.io/badge/debian-12%20bookworm-red.svg" alt="Debian 12"/>
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/Status-Production%20Ready-success" alt="Production Ready"/>
-  <img src="https://img.shields.io/badge/Tests-Passing-success" alt="Tests Passing"/>
-  <img src="https://img.shields.io/badge/Coverage-99%25-brightgreen" alt="Coverage 99%"/>
 </p>
 
 ---
 
-## 🎯 What Does This Do?
+## 🎯 What Problem Does This Solve?
 
-**System Health Monitor** is a smart monitoring tool that acts like a doctor for your Linux servers. Instead of just saying "something's wrong," it tells you:
-
-- **What** is wrong (CPU overload, memory leak, disk full, etc.)
-- **Why** it happened (which service caused it, when it started)
-- **How** to fix it (specific commands and recommendations)
-
-### 🤔 Why Should I Care?
-
-**Before Health Monitor:**
+**Before System Health Monitor:**
 ```
-You: "Why is the server slow?"
-Server: *silence*
-You: *spends 2 hours checking logs, top, htop, iotop...*
+Server is slow → Check top → Check htop → Check logs → Check disk
+→ Check memory → Check network → Google symptoms → 2 hours later...
 ```
 
-**With Health Monitor:**
+**With System Health Monitor:**
 ```bash
 $ ./health-check.sh
 
-# System Health Report - prod-web-01
-**Status**: ⚠️ WARNING (Score: 72/100)
+⚠️ WARNING (Score: 72/100)
+🚨 PostgreSQL memory leak detected after v15.1 upgrade (14:23)
+💡 Fix: sudo systemctl restart postgresql
 
-## 🚨 Issues Found
-- **Memory**: 94% used (normally 65%)
-- **Root Cause**: PostgreSQL memory leak after v15.1 upgrade at 14:23
-- **Fix**: Restart PostgreSQL: `sudo systemctl restart postgresql`
-
-## 💡 Recommendations
-1. Review PostgreSQL memory settings
-2. Consider adding 4GB RAM
-3. Enable query caching
+# 5 seconds to diagnosis ✓
 ```
-
-**Result:** Problem diagnosed in 5 seconds instead of 2 hours.
 
 ---
 
 ## ⚡ Quick Start
 
-### Installation (One Command)
+### One-Line Installation
 
 ```bash
-# Download and install
-curl -fsSL https://raw.githubusercontent.com/calounx/pmanalysis/master/install.sh | bash
-
-# Or manual installation
-git clone https://github.com/calounx/pmanalysis.git
-cd pmanalysis
-chmod +x health-check.sh
-sudo ./health-check.sh
+curl -fsSL https://raw.githubusercontent.com/calounx/pmanalysis/master/install.sh | sudo bash
 ```
 
-### First Health Check
+### Run Your First Health Check
 
 ```bash
-# Run a basic check
-./health-check.sh
-
-# Get JSON output (for automation)
-./health-check.sh --json
-
-# Check specific component
-./health-check.sh --component cpu
-
-# Monitor continuously (every 60 seconds)
-./health-check.sh --monitor 60
+health-check.sh
 ```
 
-That's it! No configuration required.
+That's it! No configuration needed.
 
 ---
 
-## 🎨 What Does the Output Look Like?
+## 🚀 Key Features
+
+### 1. **Comprehensive System Monitoring**
+Monitors everything that matters:
+- **CPU**: Load average, usage, I/O wait, CPU steal
+- **Memory**: RAM usage, swap, OOM killer events
+- **Disk**: Space, inodes, I/O performance
+- **Network**: Throughput, errors, dropped packets, retransmits
+- **Services**: Failed systemd units, zombie processes
+
+### 2. **Intelligent Health Scoring**
+Get an instant health score (0-100):
+- **90-100**: Perfect health ✅
+- **80-89**: Minor issues ⚠️
+- **50-79**: Attention needed ⚠️
+- **0-49**: Critical - act now! 🚨
+
+### 3. **Root Cause Analysis**
+The game-changer:
+- Automatically detects what changed recently
+- Correlates changes with performance degradation
+- Shows before/after comparisons
+- Provides specific fix commands
+
+### 4. **Multiple Output Formats**
+- **Markdown**: Human-readable reports
+- **JSON**: Perfect for automation and APIs
+- **Quiet Mode**: Just exit codes for scripts
+
+### 5. **Zero Configuration**
+Works out of the box with smart defaults
+
+---
+
+## 📊 Example Output
 
 ### Human-Readable Report
 
@@ -121,17 +115,13 @@ None
 - /: 45%
 - /var: 82% ⚠️
 
-### Services
-- Failed Units: 0
-- Zombie Processes: 0
-
 ## 💡 Recommendations
 1. Investigate /var disk usage growth
 2. Consider disabling swap or adding RAM
-3. Review slow queries if database host
+3. Review application logs for errors
 ```
 
-### JSON Output (for tools like Prometheus, Grafana)
+### JSON Output (for Prometheus, Grafana, etc.)
 
 ```json
 {
@@ -163,46 +153,7 @@ None
 
 ---
 
-## 🚀 Core Features
-
-### 1️⃣ **Comprehensive Monitoring**
-Tracks everything that matters:
-- **CPU**: Load average, usage, I/O wait, CPU steal
-- **Memory**: RAM usage, swap, OOM events
-- **Disk**: Space, inodes, I/O performance
-- **Network**: Throughput, errors, dropped packets
-- **Services**: Failed systemd units, zombie processes
-
-### 2️⃣ **Smart Scoring System**
-Get an instant health score (0-100):
-- **90-100**: Everything is perfect ✅
-- **80-89**: Minor issues, nothing urgent ⚠️
-- **50-79**: Attention needed soon ⚠️
-- **0-49**: Critical problems, act now! 🚨
-
-### 3️⃣ **Root Cause Analysis**
-The game-changer feature:
-- Automatically detects what changed recently
-- Correlates changes with performance issues
-- Shows before/after comparisons
-- Suggests specific fixes
-
-### 4️⃣ **Multiple Output Formats**
-Works with any workflow:
-- **Markdown**: Beautiful human-readable reports
-- **JSON**: Perfect for automation and APIs
-- **Prometheus**: Ready for Grafana dashboards (coming soon)
-- **Quiet Mode**: Just exit codes for scripts
-
-### 5️⃣ **Zero Configuration**
-Works out of the box:
-- Auto-detects your system
-- Smart defaults for all thresholds
-- Optional customization if you need it
-
----
-
-## 📚 Common Use Cases
+## 💡 Common Use Cases
 
 ### 1. Daily Health Checks (Cron Job)
 
@@ -228,25 +179,18 @@ systemctl status health-check.timer
 ### 3. Multi-Server Fleet Monitoring
 
 ```bash
-# Create hosts file
-cat > hosts.txt <<EOF
-web-server-01
-web-server-02
-db-server-01
-EOF
-
 # Aggregate health from all servers
-./aggregate-health.sh --file hosts.txt --output summary
+./bin/aggregate-health.sh --file hosts.txt --output summary
 ```
 
-### 4. Alert to Slack/Teams When Issues Detected
+### 4. Alert to Slack/Teams
 
 ```bash
 # Set webhook URL
 export WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK"
 
-# Run health check and alert if score < 80
-./alert-webhook.sh --type slack --threshold 80
+# Run and alert if score < 80
+./bin/alert-webhook.sh --type slack --threshold 80
 ```
 
 ### 5. Integration with Grafana
@@ -278,17 +222,35 @@ DISK_USAGE_WARNING=80
 DISK_USAGE_CRITICAL=90
 ```
 
-### Filtering by Component
+### Command-Line Options
 
 ```bash
-# Check only CPU
+# Basic usage
+./health-check.sh
+
+# JSON output only
+./health-check.sh --json
+
+# Check specific component
 ./health-check.sh --component cpu
 
-# Check only disk and memory
+# Check multiple components
 ./health-check.sh --component disk,memory
 
-# Skip network checks
-./health-check.sh --skip network
+# Continuous monitoring (every 60 seconds)
+./health-check.sh --monitor 60
+
+# Quiet mode (exit codes only)
+./health-check.sh --quiet
+
+# Save to file
+./health-check.sh --output /var/log/health-report.md
+
+# Show version
+./health-check.sh --version
+
+# Show help
+./health-check.sh --help
 ```
 
 ### Historical Trending
@@ -303,6 +265,242 @@ cat /var/log/health-history.jsonl | jq -r '[.timestamp, .score] | @csv'
 # Average score today
 cat /var/log/health-history.jsonl | jq -s 'map(.score) | add / length'
 ```
+
+---
+
+## 📁 Repository Structure
+
+```
+/
+├── health-check.sh              # Main monitoring script
+├── install.sh                   # Automated installation
+├── LICENSE                      # MIT License
+├── README.md                    # This file
+│
+├── bin/                         # Utility scripts
+│   ├── aggregate-health.sh      # Multi-server monitoring
+│   ├── alert-webhook.sh         # Slack/Teams alerting
+│   ├── test-production-readiness.sh  # Testing suite
+│   └── validate-deployment.sh   # Deployment validator
+│
+├── docs/                        # Documentation
+│   ├── FAQ.md                   # Frequently asked questions
+│   ├── PRODUCTION_RUNBOOK.md    # Operations guide
+│   ├── INCIDENT_PLAYBOOK.md     # Emergency procedures
+│   ├── DEPLOYMENT_CHECKLIST.md  # Pre-deployment checks
+│   ├── SLA-SLO.md              # Service level objectives
+│   └── man/
+│       └── health-check.1       # Man page
+│
+├── examples/                    # Example configurations
+│   └── grafana-dashboard.json   # Grafana dashboard
+│
+├── security/                    # Security policies
+│   ├── health-check.te          # SELinux policy
+│   └── usr.local.bin.health-check  # AppArmor profile
+│
+├── ansible/                     # Deployment automation
+│   └── deploy-health-check.yml  # Ansible playbook
+│
+└── .github/                     # CI/CD
+    └── workflows/
+        └── ci.yml               # GitHub Actions workflow
+```
+
+---
+
+## 🔮 Roadmap: Future Features
+
+### 🎯 Phase 1 - Enhanced Intelligence (Q1 2026)
+
+#### **AI-Powered Anomaly Detection**
+- Machine learning models to detect unusual patterns
+- Automatic baseline learning from historical data
+- Predict issues before they become critical
+- "Your CPU usage is 50% higher than usual for a Tuesday at 2pm"
+
+#### **Smart Alerting with Context**
+- Context-aware alert suppression
+- Alert correlation across multiple servers
+- Intelligent escalation based on severity and trends
+- Integration with PagerDuty, Opsgenie, and VictorOps
+
+#### **Performance Trend Analysis**
+- Automatic capacity planning recommendations
+- "You'll run out of disk space in 3 days at current growth rate"
+- Seasonal pattern detection
+- Performance degradation alerts
+
+#### **Enhanced Root Cause Analysis**
+- Cross-metric correlation engine
+- Dependency mapping between services
+- Change impact analysis
+- Automatic remediation suggestions with confidence scores
+
+---
+
+### 🚀 Phase 2 - Visualization & Reporting (Q2 2026)
+
+#### **Web Dashboard**
+- Real-time monitoring UI
+- Interactive charts and graphs
+- Multi-server fleet view at a glance
+- Mobile-responsive design
+- Drill-down capabilities for detailed analysis
+
+#### **Advanced Reporting**
+- PDF report generation
+- Email digest reports (daily/weekly/monthly)
+- Executive summary dashboards
+- Custom report templates
+- SLA compliance reports
+
+#### **Prometheus Native Export**
+- Native Prometheus metrics endpoint
+- Pre-built Grafana dashboards
+- Ready-to-use alerting rules
+- Integration with existing Prometheus setups
+
+#### **Historical Data Management**
+- Long-term metrics storage
+- Data retention policies
+- Trend analysis over weeks/months
+- Compare current vs historical baselines
+
+---
+
+### 🌐 Phase 3 - Platform Expansion (Q3 2026)
+
+#### **Multi-Distribution Support**
+- Ubuntu LTS versions (20.04, 22.04, 24.04)
+- RHEL/CentOS/Rocky Linux 8 & 9
+- Fedora Server
+- Alpine Linux (for containers)
+- Automatic OS detection and adaptation
+
+#### **Container & Cloud Native**
+- Docker container health monitoring
+- Kubernetes pod metrics and health
+- Container resource usage tracking
+- Helm chart for K8s deployment
+- Integration with container orchestration platforms
+
+#### **Cloud Provider Integration**
+- AWS EC2 metadata and CloudWatch integration
+- GCP Compute Engine support
+- Azure VM insights
+- DigitalOcean Droplets
+- Cloud-specific metrics (credits, quotas, etc.)
+
+#### **Database-Specific Monitoring**
+- PostgreSQL: Query performance, locks, replication lag
+- MySQL/MariaDB: Slow queries, connection pools
+- MongoDB: Operations, replica set health
+- Redis: Memory usage, keyspace analysis
+- Elasticsearch: Cluster health, shard allocation
+
+---
+
+### 🎁 Phase 4 - Enterprise Features (Q4 2026)
+
+#### **Multi-Tenancy & RBAC**
+- Multi-organization support
+- Role-based access control
+- Team management and permissions
+- Audit logging for compliance
+- SSO/SAML integration
+
+#### **Advanced Security Scanning**
+- CVE vulnerability detection
+- Compliance checking (CIS benchmarks, PCI-DSS, SOC 2)
+- Security audit reports
+- Automatic patch recommendations
+- Security posture scoring
+
+#### **API & Automation**
+- RESTful API for all operations
+- GraphQL endpoint for flexible queries
+- Webhooks for custom integrations
+- SDK for Python, Go, Node.js
+- CLI tool with full API access
+
+#### **Cost Optimization Intelligence**
+- Cloud cost analysis and optimization
+- Resource right-sizing recommendations
+- Idle resource detection
+- Cost forecasting and budgeting
+- Multi-cloud cost comparison
+
+---
+
+### 💎 Phase 5 - AI & Advanced Analytics (2027)
+
+#### **Predictive Maintenance**
+- Predict hardware failures before they occur
+- Disk failure prediction using SMART data
+- Memory degradation detection
+- Network equipment failure forecasting
+- Proactive replacement recommendations
+
+#### **Natural Language Interface**
+- Chat-based monitoring ("What's wrong with server prod-web-01?")
+- Natural language queries ("Show me all servers with high CPU in the last hour")
+- Voice commands for status checks
+- Automated troubleshooting conversations
+- Integration with ChatOps platforms
+
+#### **Auto-Remediation Engine**
+- Automatically fix common issues
+- Safe operations only (restart services, clear caches, rotate logs)
+- Approval workflows for risky actions
+- Rollback capabilities
+- Complete audit trail of all automated actions
+
+#### **Application Performance Monitoring (APM)**
+- Application-level metrics collection
+- Distributed tracing support
+- Custom application probes
+- API endpoint monitoring
+- User experience metrics (response times, error rates)
+- Code-level performance profiling
+
+---
+
+### 🌟 Community Requested Features
+
+#### **Plugin Ecosystem**
+- Plugin marketplace for community contributions
+- Custom metric collectors
+- Third-party service integrations
+- Plugin development SDK and documentation
+- Plugin security verification
+
+#### **Mobile Applications**
+- iOS and Android native apps
+- Push notifications for alerts
+- Remote server management
+- Quick health check dashboard
+- Offline mode with sync
+
+#### **Advanced Integrations**
+- Jira ticket creation from alerts
+- ServiceNow incident management
+- Zendesk support integration
+- GitHub/GitLab issue tracking
+- MS Teams deep integration
+
+#### **Internationalization**
+- Multi-language support (Spanish, French, German, Chinese, Japanese)
+- Localized documentation
+- Regional date/time formats
+- Timezone-aware scheduling
+
+#### **Backup & Disaster Recovery Monitoring**
+- Backup job health monitoring
+- Recovery point objective (RPO) tracking
+- Backup verification and testing
+- Disaster recovery drill automation
+- Compliance reporting for backups
 
 ---
 
@@ -322,36 +520,25 @@ cat /var/log/health-history.jsonl | jq -s 'map(.score) | add / length'
 │     ├─ Network metrics (/sys/class/net)                │
 │     └─ Service status (systemctl)                      │
 │                                                         │
-│  2. Analysis                                            │
+│  2. Analysis Engine                                     │
 │     ├─ Compare against thresholds                      │
 │     ├─ Calculate component scores                      │
-│     ├─ Identify correlations                           │
+│     ├─ Root cause correlation                          │
+│     ├─ Pattern recognition                             │
 │     └─ Generate recommendations                        │
 │                                                         │
-│  3. Reporting                                           │
+│  3. Reporting & Output                                  │
 │     ├─ Markdown report                                 │
 │     ├─ JSON output                                     │
+│     ├─ Prometheus metrics                              │
 │     └─ Exit codes (0=healthy, 1=warning, 2=critical)   │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Components
-
-| Component | Purpose | Location |
-|-----------|---------|----------|
-| `health-check.sh` | Main monitoring script | Root |
-| `aggregate-health.sh` | Multi-host aggregator | Root |
-| `alert-webhook.sh` | Alerting to Slack/Teams | Root |
-| `validate-deployment.sh` | Deployment validator | Root |
-| `test-production-readiness.sh` | Comprehensive test suite | Root |
-| `docs/` | Documentation | docs/ |
-| `ansible/` | Deployment automation | ansible/ |
-| `.github/workflows/` | CI/CD pipeline | .github/workflows/ |
-
 ---
 
-## 🎓 Documentation
+## 📚 Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -360,132 +547,7 @@ cat /var/log/health-history.jsonl | jq -s 'map(.score) | add / length'
 | [Incident Playbook](docs/INCIDENT_PLAYBOOK.md) | Emergency response procedures |
 | [Deployment Checklist](docs/DEPLOYMENT_CHECKLIST.md) | Pre-deployment verification |
 | [SLA/SLO Framework](docs/SLA-SLO.md) | Service level objectives |
-
----
-
-## 🔮 Roadmap: Future Features
-
-### 🎯 Phase 2 - Enhanced Reporting (Q1 2026)
-
-- [ ] **Prometheus Export Format**
-  - Native Prometheus metrics endpoint
-  - Ready-to-use Grafana dashboards
-  - Pre-configured alerting rules
-
-- [ ] **Baseline Comparison Mode**
-  - Save "golden state" baseline
-  - Compare current vs baseline
-  - Highlight deviations automatically
-
-- [ ] **Historical Trending**
-  - Store last 100 health checks
-  - Trend graphs in terminal (ASCII art)
-  - Detect patterns and anomalies
-
-- [ ] **Custom Alerting Rules**
-  - User-defined alert conditions
-  - Alert suppression (maintenance windows)
-  - Alert routing (Slack, email, PagerDuty)
-
-### 🚀 Phase 3 - Automation & Intelligence (Q2 2026)
-
-- [ ] **Auto-Remediation**
-  - Automatically fix common issues
-  - Safe operations only (restart services, clear caches)
-  - Approval required for risky actions
-  - Audit log of all actions
-
-- [ ] **Predictive Analytics**
-  - Machine learning anomaly detection
-  - "You'll run out of disk space in 3 days"
-  - Capacity planning recommendations
-  - Seasonal pattern detection
-
-- [ ] **Advanced Root Cause Analysis**
-  - Cross-correlate metrics automatically
-  - "Memory spike caused by cron job at 2am"
-  - Dependency mapping (this service affects these)
-  - Change impact analysis
-
-- [ ] **Performance Profiling**
-  - Deep-dive into slow processes
-  - Identify bottlenecks automatically
-  - Suggest optimizations
-  - Before/after benchmarks
-
-### 🌐 Phase 4 - Enterprise Features (Q3 2026)
-
-- [ ] **Web Dashboard**
-  - Real-time monitoring UI
-  - Multi-server fleet view
-  - Interactive graphs
-  - Mobile-responsive design
-
-- [ ] **Multi-Cloud Support**
-  - AWS EC2 metadata integration
-  - GCP Compute Engine support
-  - Azure VM insights
-  - Cloud-specific metrics
-
-- [ ] **Advanced Security Scanning**
-  - Vulnerability detection
-  - Compliance checking (CIS benchmarks)
-  - Security audit reports
-  - Automatic patching recommendations
-
-- [ ] **Database-Specific Monitoring**
-  - PostgreSQL query analysis
-  - MySQL slow query detection
-  - Redis memory optimization
-  - MongoDB performance tuning
-
-### 🎁 Phase 5 - Ecosystem Integration (Q4 2026)
-
-- [ ] **Plugin System**
-  - Custom metric collectors
-  - Third-party integrations
-  - Community plugins marketplace
-  - Plugin development SDK
-
-- [ ] **Container Monitoring**
-  - Docker container health
-  - Kubernetes pod metrics
-  - Resource quotas and limits
-  - Container orchestration integration
-
-- [ ] **Application Performance Monitoring**
-  - Application-level metrics
-  - Custom application probes
-  - API endpoint monitoring
-  - User experience metrics
-
-- [ ] **Cost Optimization**
-  - Cloud cost analysis
-  - Resource utilization recommendations
-  - Right-sizing suggestions
-  - Cost forecasting
-
-### 💡 Community Requested Features
-
-- [ ] **Email Reports**
-  - Daily/weekly health summaries
-  - Customizable report templates
-  - PDF generation
-
-- [ ] **Mobile App**
-  - iOS and Android apps
-  - Push notifications
-  - Remote server management
-
-- [ ] **AI Assistant**
-  - Natural language queries
-  - "What's causing high CPU?"
-  - Automated troubleshooting guide
-
-- [ ] **Multi-Language Support**
-  - Internationalization (i18n)
-  - Spanish, French, German, Chinese
-  - Localized documentation
+| [Man Page](docs/man/health-check.1) | Unix man page |
 
 ---
 
@@ -503,52 +565,21 @@ Found a bug? [Open an issue](https://github.com/calounx/pmanalysis/issues) with:
 
 ### 💡 Suggest Features
 
-Have an idea? [Start a discussion](https://github.com/calounx/pmanalysis/discussions) or open a feature request issue.
+Have an idea? [Start a discussion](https://github.com/calounx/pmanalysis/discussions) or open a feature request.
 
 ### 🔧 Submit Pull Requests
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
 3. Make your changes
-4. Run tests (`./test-production-readiness.sh`)
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
+4. Run tests: `./bin/test-production-readiness.sh`
+5. Commit: `git commit -m 'Add amazing feature'`
+6. Push: `git push origin feature/amazing-feature`
 7. Open a Pull Request
 
 ### 📖 Improve Documentation
 
-Documentation improvements are always welcome:
-- Fix typos
-- Add examples
-- Clarify instructions
-- Translate to other languages
-
----
-
-## 🏆 Credits & Thanks
-
-### Built With
-
-- **Bash 5.2+** - Shell scripting
-- **jq** - JSON processing
-- **sysstat** - System statistics
-- **GitHub Actions** - CI/CD automation
-- **Ansible** - Deployment automation
-
-### Inspired By
-
-- [Netdata](https://www.netdata.cloud/) - Real-time monitoring
-- [Checkmk](https://checkmk.com/) - Enterprise monitoring
-- [Prometheus](https://prometheus.io/) - Metrics & alerting
-- [Datadog](https://www.datadoghq.com/) - Observability platform
-
-### Contributors
-
-<a href="https://github.com/calounx/pmanalysis/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=calounx/pmanalysis" />
-</a>
-
-Special thanks to all contributors who help make this project better!
+Documentation improvements are always welcome!
 
 ---
 
@@ -563,6 +594,24 @@ Special thanks to all contributors who help make this project better!
 | **Dependencies** | 5 (jq, bc, sysstat, lsof, net-tools) |
 | **Deployment Time** | 15 minutes (100 hosts) |
 | **Execution Time** | < 3 seconds |
+| **Active Installations** | Growing! |
+
+---
+
+## 🏆 Built With
+
+- **Bash 5.2+** - Shell scripting
+- **jq** - JSON processing
+- **sysstat** - System statistics
+- **GitHub Actions** - CI/CD automation
+- **Ansible** - Deployment automation
+
+### Inspired By
+
+- [Netdata](https://www.netdata.cloud/) - Real-time monitoring
+- [Checkmk](https://checkmk.com/) - Enterprise monitoring
+- [Prometheus](https://prometheus.io/) - Metrics & alerting
+- [Datadog](https://www.datadoghq.com/) - Observability platform
 
 ---
 
@@ -570,45 +619,20 @@ Special thanks to all contributors who help make this project better!
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-### What This Means
-
-✅ **You CAN:**
-- Use commercially
-- Modify the code
-- Distribute
-- Sublicense
-- Use privately
-
-❌ **You CANNOT:**
-- Hold us liable
-- Use our trademarks without permission
-
-**TL;DR:** Free to use, no strings attached. We just ask you keep the license notice.
+**TL;DR:** Free to use commercially, modify, distribute, and sublicense. No strings attached.
 
 ---
 
-## 🆘 Support
+## 🆘 Getting Help
 
-### Getting Help
-
-- 📖 **Documentation**: Check our [docs/](docs/) folder
+- 📖 **Documentation**: Check [docs/](docs/)
 - 💬 **Discussions**: [GitHub Discussions](https://github.com/calounx/pmanalysis/discussions)
 - 🐛 **Bug Reports**: [GitHub Issues](https://github.com/calounx/pmanalysis/issues)
-- 📧 **Email**: support@pmanalysis.dev (enterprise support)
-
-### Enterprise Support
-
-Need professional support? We offer:
-- 24/7 incident response
-- Custom feature development
-- On-site training
-- SLA guarantees
-
-Contact: enterprise@pmanalysis.dev
+- 📧 **Email**: support@pmanalysis.dev
 
 ---
 
-## 🌟 Star History
+## ⭐ Star History
 
 If you find this useful, please star the repo! It helps others discover the project.
 
@@ -628,15 +652,15 @@ Love this project? Help us grow:
 ---
 
 <p align="center">
-  <strong>Made with ❤️ by the PM Analysis Team</strong>
+  <strong>Made with ❤️ by the System Health Monitor Team</strong>
   <br>
   <sub>Monitoring made simple</sub>
 </p>
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
-  <a href="#-core-features">Features</a> •
-  <a href="#-documentation">Docs</a> •
+  <a href="#-key-features">Features</a> •
+  <a href="#-common-use-cases">Use Cases</a> •
   <a href="#-roadmap-future-features">Roadmap</a> •
   <a href="#-contributing">Contributing</a>
 </p>
