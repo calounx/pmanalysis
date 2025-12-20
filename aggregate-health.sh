@@ -7,7 +7,8 @@
 set -euo pipefail
 
 readonly SCRIPT_VERSION="1.0.0"
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Configuration
 HOSTS_FILE="${HOSTS_FILE:-hosts.txt}"
@@ -118,7 +119,7 @@ collect_host() {
 
 # Create temp directory for results
 TEMP_DIR="$(mktemp -d)"
-trap "rm -rf '$TEMP_DIR'" EXIT
+trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # Parallel collection using xargs
 export -f collect_host log_info log_error

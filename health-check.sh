@@ -77,7 +77,6 @@ readonly OPTIONAL_COMMANDS=(
 )
 
 # Global variables
-declare -A METRICS=()
 declare -a ALERTS=()
 declare -a RECOMMENDATIONS=()
 declare -a COLLECTION_ERRORS=()
@@ -1172,7 +1171,6 @@ check_prerequisites() {
     # Temporarily disable errexit for checks
     set +e
 
-    local auto_install="${1:-false}"
     local -i pass_count=0 fail_count=0
 
     echo "════════════════════════════════════════════════════════════"
@@ -1267,7 +1265,8 @@ check_prerequisites() {
 
         if [[ ${#missing_apt[@]} -gt 0 ]]; then
             # Deduplicate packages
-            local -a unique_packages=($(printf '%s\n' "${missing_apt[@]}" | sort -u))
+            local -a unique_packages
+            mapfile -t unique_packages < <(printf '%s\n' "${missing_apt[@]}" | sort -u)
 
             echo "Install missing packages with:"
             echo "  sudo apt update"
@@ -1361,7 +1360,7 @@ collect_package_changes() {
                 local timestamp="${BASH_REMATCH[1]}"
                 local action="${BASH_REMATCH[2]}"
                 local package="${BASH_REMATCH[3]}"
-                local arch="${BASH_REMATCH[4]}"
+                # arch="${BASH_REMATCH[4]}" - not used
                 local versions="${BASH_REMATCH[5]}"
 
                 # Only include changes within lookback window
@@ -1663,6 +1662,7 @@ main() {
                 shift
                 ;;
             --no-color)
+                # shellcheck disable=SC2034  # NO_COLOR reserved for future use
                 NO_COLOR=true
                 shift
                 ;;

@@ -7,7 +7,8 @@
 set -euo pipefail
 
 readonly SCRIPT_VERSION="1.0.0"
-readonly SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+readonly SCRIPT_NAME
 
 # Configuration (can be overridden by environment variables)
 WEBHOOK_URL="${WEBHOOK_URL:-}"
