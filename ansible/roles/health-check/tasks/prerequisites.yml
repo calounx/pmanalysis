@@ -1,0 +1,52 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install required packages
+  apt:
+    name:
+      - jq
+      - bc
+      - coreutils
+      - procps
+    state: present
+
+- name: Install optional packages
+  apt:
+    name:
+      - sysstat
+      - lsof
+      - net-tools
+    state: present
+  ignore_errors: yes
+
+- name: Create monitoring user
+  user:
+    name: "{{ health_check_user }}"
+    comment: "Health Check Monitoring User"
+    shell: /bin/bash
+    create_home: yes
+    system: no
+
+- name: Create health-check directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ health_check_user }}"
+    group: "{{ health_check_group }}"
+    mode: '0755'
+  loop:
+    - "{{ health_check_install_dir }}"
+    - "{{ health_check_rca_dir }}"
+    - "{{ health_check_log_dir }}"
+
+- name: Configure sudo for health-check
+  template:
+    src: sudoers.j2
+    dest: /etc/sudoers.d/health-check
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s

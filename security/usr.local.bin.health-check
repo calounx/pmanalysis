@@ -1,0 +1,132 @@
+# AppArmor profile for health-check
+# Last Modified: 2025-12-20
+# Purpose: Confine health-check.sh to minimal permissions
+
+#include <tunables/global>
+
+/usr/local/bin/health-check {
+  #include <abstractions/base>
+  #include <abstractions/bash>
+
+  # Script execution
+  /opt/health-check/health-check.sh r,
+  /usr/local/bin/health-check r,
+
+  # Bash and interpreters
+  /bin/bash ix,
+  /bin/dash ix,
+  /usr/bin/bash ix,
+
+  # Required utilities
+  /usr/bin/jq ix,
+  /usr/bin/bc ix,
+  /usr/bin/awk ix,
+  /usr/bin/sed ix,
+  /usr/bin/grep ix,
+  /usr/bin/date ix,
+  /usr/bin/hostname ix,
+  /usr/bin/nproc ix,
+  /usr/bin/timeout ix,
+
+  # System commands (read-only)
+  /bin/df ix,
+  /usr/bin/free ix,
+  /usr/bin/uptime ix,
+  /bin/ps ix,
+  /usr/bin/top ix,
+  /bin/ss ix,
+  /bin/netstat ix,
+  /usr/bin/lsof ix,
+  /usr/bin/iostat ix,
+
+  # Systemd access
+  /bin/systemctl ix,
+  /usr/bin/systemctl ix,
+
+  # Sudo access (limited to specific commands)
+  /usr/bin/sudo Cx -> sudo_dmesg,
+  /usr/bin/sudo Cx -> sudo_journalctl,
+
+  # Read /proc filesystem
+  @{PROC}/ r,
+  @{PROC}/** r,
+  @{PROC}/sys/kernel/** r,
+
+  # Read /sys filesystem
+  /sys/** r,
+
+  # Read system configuration
+  /etc/** r,
+  /usr/** r,
+
+  # Read disk information
+  /dev/disk/** r,
+  /run/mount/utab r,
+
+  # Write to data directory
+  /var/lib/health-check/ rw,
+  /var/lib/health-check/** rw,
+
+  # Write to log directory
+  /var/log/health-check/ rw,
+  /var/log/health-check/** rw,
+  /var/log/health.jsonl w,
+
+  # Temporary files
+  /tmp/ r,
+  /tmp/health-check.*.tmp rw,
+  /tmp/hc-*.json rw,
+
+  # Network access (for webhooks)
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # DNS resolution
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+  /run/systemd/resolve/stub-resolv.conf r,
+
+  # User home (for monitoring user)
+  owner @{HOME}/.bash_history rw,
+
+  # Deny dangerous paths
+  deny /boot/** rwx,
+  deny /root/** rwx,
+  deny /home/*/.ssh/** rwx,
+
+  # Deny capability escalation
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability dac_override,
+  deny capability dac_read_search,
+
+  # Child profile for: sudo dmesg
+  profile sudo_dmesg {
+    #include <abstractions/base>
+
+    /usr/bin/sudo ix,
+    /bin/dmesg ix,
+    /usr/bin/dmesg ix,
+
+    # Read kernel ring buffer
+    capability sys_admin,
+    @{PROC}/kmsg r,
+    /dev/kmsg r,
+  }
+
+  # Child profile for: sudo journalctl
+  profile sudo_journalctl {
+    #include <abstractions/base>
+
+    /usr/bin/sudo ix,
+    /bin/journalctl ix,
+    /usr/bin/journalctl ix,
+
+    # Read systemd journal
+    capability sys_admin,
+    /var/log/journal/** r,
+    /run/log/journal/** r,
+  }
+}

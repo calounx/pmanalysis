@@ -1,0 +1,228 @@
+{
+  "dashboard": {
+    "title": "System Health Monitor",
+    "tags": ["health-check", "system", "monitoring"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "time": {
+      "from": "now-6h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Overall Health Score",
+        "type": "gauge",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "system_health_score",
+            "legendFormat": "{{host}}"
+          }
+        ],
+        "options": {
+          "showThresholdLabels": false,
+          "showThresholdMarkers": true
+        },
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 50, "color": "orange"},
+                {"value": 80, "color": "green"}
+              ]
+            },
+            "unit": "none"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Fleet Health Overview",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "count(system_health_score >= 80)",
+            "legendFormat": "Healthy Hosts"
+          },
+          {
+            "expr": "count(system_health_score < 80 and system_health_score >= 50)",
+            "legendFormat": "Warning Hosts"
+          },
+          {
+            "expr": "count(system_health_score < 50)",
+            "legendFormat": "Critical Hosts"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "orange"},
+                {"value": 5, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Health Score Trend (24h)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "system_health_score",
+            "legendFormat": "{{host}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "none", "min": 0, "max": 100}
+        ],
+        "xaxis": {"mode": "time"},
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [50], "type": "lt"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"type": "avg"},
+              "type": "query"
+            }
+          ],
+          "frequency": "1m",
+          "handler": 1,
+          "name": "Health Score Critical",
+          "message": "System health score below 50 for 5 minutes"
+        }
+      },
+      {
+        "id": 4,
+        "title": "CPU Load (1min)",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "system_cpu_load_1min",
+            "legendFormat": "{{host}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "none"}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "system_memory_usage_percent",
+            "legendFormat": "{{host}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "min": 0, "max": 100}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Disk Usage by Mount Point",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "system_disk_usage_percent",
+            "legendFormat": "{{host}} - {{mount}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "min": 0, "max": 100}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Critical Alerts (Last 24h)",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "targets": [
+          {
+            "expr": "system_health_score < 80",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {
+                "host": "Hostname",
+                "Value": "Health Score"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Hosts Below Threshold",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40},
+        "targets": [
+          {
+            "expr": "system_health_score",
+            "legendFormat": "{{host}}"
+          }
+        ],
+        "dataFormat": "timeseries",
+        "yBucketBound": "auto",
+        "color": {
+          "mode": "spectrum",
+          "colorScheme": "interpolateRdYlGn",
+          "exponent": 0.5
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "host",
+          "type": "query",
+          "query": "label_values(system_health_score, host)",
+          "multi": true,
+          "includeAll": true,
+          "refresh": 1
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "iconColor": "blue"
+        },
+        {
+          "name": "Incidents",
+          "datasource": "-- Grafana --",
+          "enable": true,
+          "iconColor": "red"
+        }
+      ]
+    }
+  },
+  "overwrite": true
+}

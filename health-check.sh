@@ -12,7 +12,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Script metadata
-readonly SCRIPT_VERSION="1.1.0"
+readonly SCRIPT_VERSION="1.2.0"
 # SC2155: Declare and assign separately
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME

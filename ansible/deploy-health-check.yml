@@ -1,0 +1,39 @@
+---
+##############################################
+# Ansible Playbook: Health Check Deployment
+# Purpose: Deploy health-check.sh to Debian 12 hosts
+# Usage: ansible-playbook -i inventory deploy-health-check.yml
+##############################################
+
+- name: Deploy System Health Check
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Verify Debian 12 (Bookworm)
+      assert:
+        that:
+          - ansible_facts['distribution'] == "Debian"
+          - ansible_facts['distribution_major_version'] == "12"
+        fail_msg: "This role requires Debian 12 (Bookworm)"
+
+    - name: Verify non-root execution
+      assert:
+        that:
+          - ansible_user != "root"
+        fail_msg: "Do not run as root - use sudo"
+
+  roles:
+    - role: health-check
+      tags: [health-check, monitoring]
+
+  post_tasks:
+    - name: Run post-deployment validation
+      command: /opt/health-check/validate-deployment.sh
+      register: validation_result
+      failed_when: validation_result.rc != 0
+
+    - name: Display validation results
+      debug:
+        var: validation_result.stdout_lines

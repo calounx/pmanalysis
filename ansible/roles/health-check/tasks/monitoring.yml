@@ -1,0 +1,44 @@
+---
+- name: Install Prometheus node exporter (if not present)
+  apt:
+    name: prometheus-node-exporter
+    state: present
+  when: health_check_prometheus_export | bool
+
+- name: Create Prometheus textfile collector directory
+  file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+  when: health_check_prometheus_export | bool
+
+- name: Create Prometheus export script
+  template:
+    src: prometheus-export.sh.j2
+    dest: /usr/local/bin/health-check-prometheus.sh
+    owner: root
+    group: root
+    mode: '0755'
+  when: health_check_prometheus_export | bool
+
+- name: Configure Prometheus export cron
+  cron:
+    name: "Health Check Prometheus Export"
+    minute: "*/5"
+    user: "{{ health_check_user }}"
+    job: "/usr/local/bin/health-check-prometheus.sh"
+    cron_file: health-check-prometheus
+    state: present
+  when: health_check_prometheus_export | bool
+
+- name: Create Grafana dashboard
+  copy:
+    src: ../../../grafana-dashboard.json
+    dest: /etc/grafana/provisioning/dashboards/health-check.json
+    owner: grafana
+    group: grafana
+    mode: '0644'
+  when: health_check_grafana_dashboard | bool
+  ignore_errors: yes

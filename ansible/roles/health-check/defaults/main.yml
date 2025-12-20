@@ -1,0 +1,41 @@
+---
+##############################################
+# Health Check Role - Default Variables
+##############################################
+
+# Installation
+health_check_install_dir: /opt/health-check
+health_check_rca_dir: /var/lib/health-check
+health_check_log_dir: /var/log/health-check
+
+# User/Group
+health_check_user: monitor
+health_check_group: monitor
+
+# Cron Configuration
+health_check_enable_cron: true
+health_check_cron_minute: "*/5"
+health_check_cron_hour: "*"
+
+# Alert Configuration
+health_check_enable_alerts: false
+health_check_alert_cron_minute: "*/5"
+health_check_alert_cron_hour: "*"
+health_check_alert_command: "/usr/local/bin/alert-team 'Health check failed on {{ ansible_hostname }}'"
+
+# Systemd Configuration
+health_check_enable_systemd: false
+health_check_systemd_interval: "5min"
+
+# Monitoring Integration
+health_check_enable_monitoring: false
+health_check_prometheus_export: false
+health_check_grafana_dashboard: false
+
+# Thresholds (optional overrides)
+health_check_cpu_load_warning: 70
+health_check_cpu_load_critical: 90
+health_check_mem_usage_warning: 80
+health_check_mem_usage_critical: 95
+health_check_disk_usage_warning: 80
+health_check_disk_usage_critical: 90

@@ -1,0 +1,42 @@
+---
+- name: Copy health-check.sh script
+  copy:
+    src: ../../../health-check.sh
+    dest: "{{ health_check_install_dir }}/health-check.sh"
+    owner: "{{ health_check_user }}"
+    group: "{{ health_check_group }}"
+    mode: '0755'
+  notify: restart health-check
+
+- name: Copy validation script
+  copy:
+    src: ../../../validate-deployment.sh
+    dest: "{{ health_check_install_dir }}/validate-deployment.sh"
+    owner: "{{ health_check_user }}"
+    group: "{{ health_check_group }}"
+    mode: '0755'
+
+- name: Copy man page
+  copy:
+    src: ../../../health-check.1
+    dest: /usr/share/man/man1/health-check.1
+    owner: root
+    group: root
+    mode: '0644'
+  notify: update man database
+
+- name: Create symlink in /usr/local/bin
+  file:
+    src: "{{ health_check_install_dir }}/health-check.sh"
+    dest: /usr/local/bin/health-check
+    state: link
+
+- name: Run prerequisite check
+  command: "{{ health_check_install_dir }}/health-check.sh --check-prerequisites"
+  become_user: "{{ health_check_user }}"
+  register: prereq_check
+  changed_when: false
+
+- name: Display prerequisite check results
+  debug:
+    var: prereq_check.stdout_lines

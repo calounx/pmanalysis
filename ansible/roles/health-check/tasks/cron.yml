@@ -1,0 +1,20 @@
+---
+- name: Configure cron job for health check
+  cron:
+    name: "System Health Check"
+    minute: "{{ health_check_cron_minute }}"
+    hour: "{{ health_check_cron_hour }}"
+    user: "{{ health_check_user }}"
+    job: "{{ health_check_install_dir }}/health-check.sh --json >> {{ health_check_log_dir }}/health.jsonl 2>&1"
+    cron_file: health-check
+    state: present
+
+- name: Configure alert cron job
+  cron:
+    name: "System Health Alert"
+    minute: "{{ health_check_alert_cron_minute }}"
+    hour: "{{ health_check_alert_cron_hour }}"
+    user: "{{ health_check_user }}"
+    job: "{{ health_check_install_dir }}/health-check.sh --quiet || {{ health_check_alert_command }}"
+    cron_file: health-check-alert
+    state: "{{ 'present' if health_check_enable_alerts else 'absent' }}"

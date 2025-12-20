@@ -1,0 +1,4 @@
+# Sudoers configuration for health-check
+# Managed by Ansible - DO NOT EDIT MANUALLY
+
+{{ health_check_user }} ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl

@@ -1,0 +1,14 @@
+---
+- name: restart health-check
+  systemd:
+    name: health-check.timer
+    state: restarted
+  when: health_check_enable_systemd | bool
+
+- name: systemd daemon reload
+  systemd:
+    daemon_reload: yes
+
+- name: update man database
+  command: mandb
+  changed_when: false

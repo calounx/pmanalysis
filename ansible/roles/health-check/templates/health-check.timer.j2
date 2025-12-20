@@ -1,0 +1,11 @@
+[Unit]
+Description=System Health Check Timer
+Requires=health-check.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ health_check_systemd_interval }}
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,27 @@
+---
+##############################################
+# Health Check - Main Tasks
+##############################################
+
+- name: Include prerequisite installation
+  include_tasks: prerequisites.yml
+  tags: [prerequisites]
+
+- name: Include script deployment
+  include_tasks: deploy.yml
+  tags: [deploy]
+
+- name: Include cron configuration
+  include_tasks: cron.yml
+  when: health_check_enable_cron | bool
+  tags: [cron]
+
+- name: Include systemd timer configuration
+  include_tasks: systemd.yml
+  when: health_check_enable_systemd | bool
+  tags: [systemd]
+
+- name: Include monitoring integration
+  include_tasks: monitoring.yml
+  when: health_check_enable_monitoring | bool
+  tags: [monitoring]

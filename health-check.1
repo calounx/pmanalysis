@@ -1,0 +1,390 @@
+.TH HEALTH-CHECK 1 "2025-12-20" "v1.1.0" "System Health Monitor"
+.SH NAME
+health-check \- Debian 12 system health analyzer and monitoring tool
+.SH SYNOPSIS
+.B health-check.sh
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B health-check
+is a production-grade system health analysis script for Debian 12 hosts. It performs comprehensive monitoring of CPU, memory, disk, network, and service health, providing structured JSON output and human-readable reports with intelligent root cause analysis.
+
+The script must be run as a non-root user with sudo privileges. It collects metrics from /proc, /sys, systemd, and system logs to provide a holistic health score (0-100) with component-level breakdowns.
+
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Display help message and exit.
+.TP
+.BR \-v ", " \-\-version
+Show version information and exit.
+.TP
+.BR \-q ", " \-\-quiet
+Suppress all output except exit code. Useful for cron jobs and automation.
+.TP
+.BR \-j ", " \-\-json
+Output JSON only (no markdown report). Ideal for machine parsing and monitoring systems.
+.TP
+.BR \-f ", " \-\-format " " \fIFORMAT\fR
+Specify output format: \fBjson\fR, \fBmarkdown\fR, or \fBprometheus\fR. Default: markdown.
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Write output to FILE instead of stdout. Creates parent directories if needed.
+.TP
+.BR \-m ", " \-\-monitor " " \fIINTERVAL\fR
+Continuous monitoring mode. Run health check every INTERVAL seconds. Use with \-\-json for time-series logging.
+.TP
+.BR \-b ", " \-\-baseline " " \fIFILE\fR
+Compare current metrics against baseline FILE. Highlights deviations and trends.
+.TP
+.BR \-s ", " \-\-score\-only
+Output only the health score (0-100). Useful for quick checks and alerting thresholds.
+.TP
+.BR \-\-no\-color
+Disable colored output. Recommended for log files and non-terminal environments.
+.TP
+.BR \-\-debug
+Enable debug logging. Shows detailed execution flow, timing, and intermediate values.
+.TP
+.BR \-\-check\-prerequisites
+Run prerequisite checker only. Validates dependencies, sudo configuration, and directory permissions.
+
+.SH EXIT STATUS
+.TP
+.B 0
+System healthy (score >= 80). All checks passed without warnings.
+.TP
+.B 1
+Warnings detected (score 50-79). System functional but requires attention.
+.TP
+.B 2
+Critical issues (score < 50) or script execution error. Immediate action required.
+
+.SH METRICS COLLECTED
+.SS CPU Metrics
+.IP \(bu 2
+Load average (1min, 5min, 15min)
+.IP \(bu 2
+Per-core usage percentage
+.IP \(bu 2
+I/O wait percentage
+.IP \(bu 2
+CPU steal time (virtualization overhead)
+.IP \(bu 2
+Context switches per second
+
+.SS Memory Metrics
+.IP \(bu 2
+Total, used, available RAM
+.IP \(bu 2
+Memory usage percentage
+.IP \(bu 2
+Swap usage (total, used, percentage)
+.IP \(bu 2
+Out-of-memory (OOM) event count
+.IP \(bu 2
+Top memory-consuming processes
+
+.SS Disk Metrics
+.IP \(bu 2
+Filesystem usage per mount point
+.IP \(bu 2
+Inode usage percentage
+.IP \(bu 2
+I/O wait time
+.IP \(bu 2
+Read/write IOPS
+.IP \(bu 2
+Disk errors from kernel logs
+
+.SS Network Metrics
+.IP \(bu 2
+Interface errors (RX/TX)
+.IP \(bu 2
+Dropped packets
+.IP \(bu 2
+Network throughput (bytes/sec)
+.IP \(bu 2
+TCP retransmit count
+.IP \(bu 2
+Established connections
+
+.SS Service Metrics
+.IP \(bu 2
+Failed systemd units
+.IP \(bu 2
+Zombie/defunct processes
+.IP \(bu 2
+Processes in uninterruptible sleep (D state)
+.IP \(bu 2
+Service start failures (last 24h)
+
+.SH ROOT CAUSE ANALYSIS
+When the health score drops below 80, automatic root cause analysis is triggered. The RCA engine:
+.IP \(bu 2
+Detects recent package installations/upgrades (dpkg.log)
+.IP \(bu 2
+Identifies configuration file modifications
+.IP \(bu 2
+Tracks systemd service changes and restarts
+.IP \(bu 2
+Correlates timing of changes with score degradation
+.IP \(bu 2
+Provides actionable diagnosis and recommendations
+
+.B Note:
+RCA is advisory only. Correlation does not imply causation. Always validate findings manually.
+
+.SH SCORING ALGORITHM
+The overall health score (0-100) is calculated using weighted component scores:
+.IP "CPU: 25%"
+.IP "Memory: 30%"
+.IP "Disk: 25%"
+.IP "Services: 20%"
+
+Each component score uses threshold-based evaluation:
+.IP \(bu 2
+< Warning threshold: 100 points
+.IP \(bu 2
+Warning to Critical: 100-50 (linear interpolation)
+.IP \(bu 2
+> Critical threshold: 50-0 (degraded scale)
+
+.SH THRESHOLDS
+Default alert thresholds (configurable in script):
+.TP
+.B CPU
+Load: 70% warning, 90% critical (% of cores)
+.br
+I/O wait: 10% warning, 25% critical
+.TP
+.B Memory
+Usage: 80% warning, 95% critical
+.br
+Swap: Any usage is warning, 50% critical
+.TP
+.B Disk
+Usage: 80% warning, 90% critical (per filesystem)
+.br
+Inodes: 80% warning, 90% critical
+.TP
+.B Network
+Errors: 100 warning, 1000 critical (per interface, 24h)
+.TP
+.B Services
+Failed units: Any failure is critical
+
+.SH FILES
+.TP
+.I /var/lib/health-check/
+Root cause analysis data directory. Stores historical scores, change logs, and RCA state.
+.TP
+.I /var/log/health.jsonl
+Recommended log file for JSON output (append mode). Use with \-\-monitor for time-series data.
+.TP
+.I /etc/sudoers.d/health-check
+Sudo configuration file. Required entries:
+.br
+.B username ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl
+
+.SH EXAMPLES
+.TP
+.B Basic health check
+.EX
+$ ./health-check.sh
+.EE
+Displays markdown report with all metrics and health score.
+
+.TP
+.B JSON output for monitoring
+.EX
+$ ./health-check.sh --json | jq '.score'
+.EE
+Extract health score for alerting threshold.
+
+.TP
+.B Continuous monitoring
+.EX
+$ ./health-check.sh --monitor 60 --json >> /var/log/health.jsonl
+.EE
+Run every 60 seconds, append JSON to log file.
+
+.TP
+.B Cron job (quiet mode)
+.EX
+*/5 * * * * /usr/local/bin/health-check.sh --quiet || /usr/local/bin/alert-team
+.EE
+Run every 5 minutes, alert on failure.
+
+.TP
+.B Prometheus export
+.EX
+$ ./health-check.sh --format prometheus > /var/lib/node_exporter/textfile_collector/health.prom
+.EE
+Generate Prometheus metrics for scraping.
+
+.TP
+.B Compare against baseline
+.EX
+$ ./health-check.sh --json > /etc/health-baseline.json
+.br
+$ ./health-check.sh --baseline /etc/health-baseline.json
+.EE
+Create baseline, then compare current state.
+
+.TP
+.B Check prerequisites
+.EX
+$ ./health-check.sh --check-prerequisites
+.EE
+Validate all dependencies and configuration before deployment.
+
+.SH INTEGRATION
+.SS Systemd Timer
+.EX
+# /etc/systemd/system/health-check.timer
+[Unit]
+Description=System Health Check Timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+
+# /etc/systemd/system/health-check.service
+[Unit]
+Description=System Health Check
+
+[Service]
+Type=oneshot
+User=monitor
+ExecStart=/usr/local/bin/health-check.sh --json --output /var/log/health-latest.json
+.EE
+
+.SS Prometheus Alerting
+.EX
+groups:
+  - name: health_check
+    rules:
+      - alert: SystemHealthCritical
+        expr: system_health_score < 50
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical health on {{ $labels.host }}"
+.EE
+
+.SS Slack Webhook
+.EX
+#!/bin/bash
+output=$(./health-check.sh --json)
+score=$(echo "$output" | jq -r '.score')
+if [[ $score -lt 80 ]]; then
+  curl -X POST $SLACK_WEBHOOK \\
+    -d "{\\"text\\": \\"Health alert: $score/100\\"}"
+fi
+.EE
+
+.SH SECURITY
+.TP
+.B Root Prevention
+Script explicitly refuses execution as root (exit 2). Must run as non-root user with sudo.
+.TP
+.B Minimal Sudo
+Only two commands require sudo: \fBdmesg\fR and \fBjournalctl\fR. All other metrics use /proc and /sys.
+.TP
+.B Input Sanitization
+No user input is passed to sudo commands. All variables sanitized before shell expansion.
+.TP
+.B Temp File Security
+Uses \fBmktemp\fR with restrictive permissions (600). Cleanup trap ensures deletion on exit.
+
+.SH DEPENDENCIES
+.SS Required
+.IP \(bu 2
+Bash 5.2+ (Debian 12 native)
+.IP \(bu 2
+jq (JSON processor)
+.IP \(bu 2
+bc (arbitrary precision calculator)
+.IP \(bu 2
+coreutils (df, free, uptime, nproc)
+
+.SS Optional (graceful degradation)
+.IP \(bu 2
+sysstat (iostat for I/O metrics)
+.IP \(bu 2
+lsof (open files and connections)
+.IP \(bu 2
+net-tools (netstat for network stats)
+
+.SH DIAGNOSTICS
+.SS Script Not Running
+.EX
+# Check cron status
+systemctl status cron
+crontab -l | grep health-check
+
+# Manual test
+./health-check.sh --debug 2>&1 | tee /tmp/debug.log
+
+# Check permissions
+ls -la health-check.sh
+ls -la /var/lib/health-check/
+.EE
+
+.SS Low Health Score
+.EX
+# Get detailed breakdown
+./health-check.sh --json | jq '.alerts'
+
+# Review RCA
+./health-check.sh --json | jq '.root_cause_analysis'
+
+# Component-specific check
+./health-check.sh --json | jq '.metrics.cpu'
+.EE
+
+.SS High Execution Time
+.EX
+# Time individual components
+time ./health-check.sh --debug 2>&1 | grep "Collecting"
+
+# Check for hung commands
+timeout 30 df -h
+timeout 30 free -h
+.EE
+
+.SH BUGS
+Report bugs to: https://github.com/calounx/pmanalysis/issues
+
+Include:
+.IP \(bu 2
+Output of: \fB./health-check.sh --version\fR
+.IP \(bu 2
+Output of: \fB./health-check.sh --debug\fR
+.IP \(bu 2
+System info: \fBuname -a\fR, \fBcat /etc/os-release\fR
+
+.SH AUTHOR
+Written by CalouNX with Claude Code assistance.
+
+.SH COPYRIGHT
+MIT License. Copyright (c) 2025 CalouNX.
+
+.SH SEE ALSO
+.BR systemctl (1),
+.BR journalctl (1),
+.BR free (1),
+.BR df (1),
+.BR top (1),
+.BR iostat (1),
+.BR jq (1)
+
+Full documentation: <https://github.com/calounx/pmanalysis>
+
+Production runbook: \fBPRODUCTION_RUNBOOK.md\fR
+.br
+Deployment checklist: \fBDEPLOYMENT_CHECKLIST.md\fR

@@ -1,0 +1,16 @@
+[Unit]
+Description=System Health Check
+Documentation=man:health-check(1)
+After=network.target
+
+[Service]
+Type=oneshot
+User={{ health_check_user }}
+Group={{ health_check_group }}
+ExecStart={{ health_check_install_dir }}/health-check.sh --json --output {{ health_check_log_dir }}/health-latest.json
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=health-check
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,97 @@
+policy_module(health_check, 1.0.0)
+
+########################################
+# SELinux Policy for Health Check
+# Purpose: Minimal permissions for health monitoring
+########################################
+
+## Type declarations
+type health_check_t;
+type health_check_exec_t;
+type health_check_data_t;
+type health_check_log_t;
+
+## Domain transition
+application_domain(health_check_t, health_check_exec_t)
+
+## File contexts
+files_type(health_check_data_t)
+logging_log_file(health_check_log_t)
+
+########################################
+# Health Check Domain Permissions
+########################################
+
+## Allow execution
+allow health_check_t health_check_exec_t:file { read execute execute_no_trans };
+
+## Read system information
+kernel_read_system_state(health_check_t)
+kernel_read_kernel_sysctls(health_check_t)
+kernel_read_network_state(health_check_t)
+
+## Access /proc filesystem
+fs_read_proc_files(health_check_t)
+fs_read_proc_symlinks(health_check_t)
+fs_getattr_proc(health_check_t)
+
+## Access /sys filesystem
+dev_read_sysfs(health_check_t)
+
+## Read system statistics
+files_read_etc_files(health_check_t)
+files_read_usr_files(health_check_t)
+
+## Allow reading disk usage
+fs_getattr_all_fs(health_check_t)
+fs_get_all_fs_quotas(health_check_t)
+
+## Allow network statistics
+sysnet_read_config(health_check_t)
+
+## Allow reading systemd status
+init_read_state(health_check_t)
+init_stream_connect(health_check_t)
+init_dbus_chat(health_check_t)
+
+## Allow writing to data directory
+allow health_check_t health_check_data_t:dir { create read write add_name remove_name };
+allow health_check_t health_check_data_t:file { create read write append unlink };
+
+## Allow writing to log directory
+allow health_check_t health_check_log_t:dir { create read write add_name };
+allow health_check_t health_check_log_t:file { create read write append };
+
+## Allow creating temporary files
+files_tmp_filetrans(health_check_t, health_check_data_t, { file dir })
+
+## Allow reading journalctl (via sudo)
+logging_read_generic_logs(health_check_t)
+logging_send_syslog_msg(health_check_t)
+
+## Allow reading dmesg (via sudo)
+kernel_read_ring_buffer(health_check_t)
+
+## Allow executing jq, bc, and other utilities
+corecmd_exec_bin(health_check_t)
+corecmd_exec_shell(health_check_t)
+
+## Network access (for webhooks)
+allow health_check_t self:tcp_socket { create connect write read };
+allow health_check_t self:udp_socket { create connect write read };
+corenet_tcp_connect_http_port(health_check_t)
+corenet_tcp_connect_http_cache_port(health_check_t)
+
+## Deny dangerous permissions
+## (Explicitly deny to prevent privilege escalation)
+deny health_check_t self:capability { sys_admin sys_module };
+deny health_check_t kernel_t:system { module_load };
+
+########################################
+# File Contexts
+# (To be added to health-check.fc)
+########################################
+
+# /opt/health-check/health-check.sh -- gen_context(system_u:object_r:health_check_exec_t,s0)
+# /var/lib/health-check(/.*)? -- gen_context(system_u:object_r:health_check_data_t,s0)
+# /var/log/health-check(/.*)? -- gen_context(system_u:object_r:health_check_log_t,s0)
