@@ -341,6 +341,9 @@ main() {
     echo ""
     log_info "Installation complete! Run '$SCRIPT_NAME' to start monitoring."
     echo ""
+
+    # Exit successfully
+    exit 0
 }
 
 # Run main function
