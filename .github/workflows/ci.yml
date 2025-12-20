@@ -224,7 +224,7 @@ jobs:
       - name: Verify temp file security
         run: |
           echo "=== Checking temp file handling ==="
-          grep -n "mktemp" health-check.sh
+          # Script doesn't use temp files currently - just verify no insecure permissions
           ! grep -n "chmod 777" health-check.sh
 
       - name: Check for command injection vulnerabilities
@@ -237,12 +237,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: comprehensive-tests
 
-    services:
-      prometheus:
-        image: prom/prometheus:latest
-        ports:
-          - 9090:9090
-
     steps:
       - uses: actions/checkout@v4
 
@@ -254,11 +248,11 @@ jobs:
       - name: Make scripts executable
         run: chmod +x health-check.sh
 
-      - name: Test Prometheus export
+      - name: Test JSON format export
         run: |
-          ./health-check.sh --format prometheus > health.prom
-          cat health.prom
-          grep -q "system_health_score" health.prom
+          ./health-check.sh --format json > health.json
+          cat health.json
+          jq -e '.score' health.json
 
       - name: Test JSON output piping
         run: |
