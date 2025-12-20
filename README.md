@@ -2,7 +2,7 @@
 
 > **Know exactly what's happening with your Debian servers - in seconds, not hours**
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/calounx/pmanalysis/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/calounx/pmanalysis/releases)
 [![CI/CD](https://github.com/calounx/pmanalysis/workflows/CI/CD%20Pipeline/badge.svg)](https://github.com/calounx/pmanalysis/actions)
 [![Debian](https://img.shields.io/badge/debian-12%20bookworm-red.svg)](https://www.debian.org)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
