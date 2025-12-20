@@ -1,6 +1,6 @@
 # 🏥 Health Check - Debian 12 System Monitor
 
-> **A production-grade health monitoring solution that tells you what's wrong AND why it happened**
+> **A health monitoring solution that tells you what's wrong AND why it happened**
 
 [![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/calounx/pmanalysis)
 [![Production](https://img.shields.io/badge/production-enterprise--ready-brightgreen.svg)](DEPLOYMENT_CHECKLIST.md)
