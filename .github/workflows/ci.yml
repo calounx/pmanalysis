@@ -292,20 +292,23 @@ jobs:
       - name: Verify all documentation
         run: |
           test -f README.md
-          test -f CLAUDE.md
-          test -f PRODUCTION_RUNBOOK.md
-          test -f DEPLOYMENT_CHECKLIST.md
           test -f health-check.1
+          test -f docs/PRODUCTION_RUNBOOK.md
+          test -f docs/DEPLOYMENT_CHECKLIST.md
+          test -f docs/FAQ.md
+          test -f docs/INCIDENT_PLAYBOOK.md
+          test -f docs/SLA-SLO.md
 
       - name: Create release artifact
         run: |
           mkdir -p release
           cp health-check.sh release/
+          cp aggregate-health.sh release/
+          cp alert-webhook.sh release/
           cp validate-deployment.sh release/
           cp README.md release/
-          cp PRODUCTION_RUNBOOK.md release/
-          cp DEPLOYMENT_CHECKLIST.md release/
           cp health-check.1 release/
+          cp -r docs release/
           tar -czf health-check-$VERSION.tar.gz release/
 
       - name: Upload release artifact
