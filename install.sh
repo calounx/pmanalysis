@@ -21,6 +21,12 @@ readonly INSTALL_DIR="/opt/pmanalysis"
 readonly BIN_DIR="/usr/local/bin"
 readonly SCRIPT_NAME="health-check.sh"
 
+# Detect if running in interactive mode
+INTERACTIVE=true
+if [[ ! -t 0 ]]; then
+    INTERACTIVE=false
+fi
+
 #######################################
 # Logging functions
 #######################################
@@ -72,10 +78,14 @@ detect_os() {
     # Check for supported OS
     if [[ "$OS" != "debian" && "$OS" != "ubuntu" ]]; then
         log_warning "This script is designed for Debian/Ubuntu. Your OS ($OS) may not be fully supported."
-        read -p "Do you want to continue anyway? (y/N) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+        if [[ "$INTERACTIVE" == true ]]; then
+            read -p "Do you want to continue anyway? (y/N) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 1
+            fi
+        else
+            log_warning "Continuing anyway (non-interactive mode)"
         fi
     fi
 }
@@ -135,14 +145,20 @@ download_repo() {
     # Remove existing installation if present
     if [[ -d "$INSTALL_DIR" ]]; then
         log_warning "Existing installation found at $INSTALL_DIR"
-        read -p "Remove and reinstall? (y/N) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            rm -rf "$INSTALL_DIR"
-            log_info "Removed existing installation"
+        if [[ "$INTERACTIVE" == true ]]; then
+            read -p "Remove and reinstall? (y/N) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                rm -rf "$INSTALL_DIR"
+                log_info "Removed existing installation"
+            else
+                log_error "Installation cancelled"
+                exit 1
+            fi
         else
-            log_error "Installation cancelled"
-            exit 1
+            # In non-interactive mode, automatically remove and reinstall
+            log_info "Automatically removing existing installation (non-interactive mode)"
+            rm -rf "$INSTALL_DIR"
         fi
     fi
 
@@ -303,10 +319,16 @@ main() {
     setup_script
 
     # Ask about systemd timer
-    echo ""
-    read -p "Do you want to set up automated health checks (systemd timer)? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if [[ "$INTERACTIVE" == true ]]; then
+        echo ""
+        read -p "Do you want to set up automated health checks (systemd timer)? (y/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            setup_systemd_timer
+        fi
+    else
+        # In non-interactive mode, create timer but don't enable it
+        log_info "Creating systemd timer (not enabled by default in non-interactive mode)"
         setup_systemd_timer
     fi
 
