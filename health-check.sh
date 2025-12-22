@@ -1080,6 +1080,8 @@ analyze_services_metrics() {
 is_nginx_available() {
     # Check systemd service
     command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null && return 0
+    # Check for running process (fallback for when command not in PATH)
+    pgrep -x nginx &>/dev/null && return 0
     # Check for Docker container
     docker ps --format '{{.Names}}' 2>/dev/null | grep -qi nginx && return 0
     return 1
@@ -1110,8 +1112,13 @@ is_mysql_available() {
 }
 
 is_redis_available() {
-    # Check systemd service
-    command -v redis-cli &>/dev/null && systemctl is-active --quiet redis-server 2>/dev/null && return 0
+    # Check systemd service (various service names)
+    if command -v redis-cli &>/dev/null; then
+        systemctl is-active --quiet redis-server 2>/dev/null && return 0
+        systemctl is-active --quiet redis 2>/dev/null && return 0
+    fi
+    # Check for running process (fallback when redis-cli not installed)
+    pgrep -x redis-server &>/dev/null && return 0
     # Check for Unix socket
     if [[ -S /var/run/redis/redis-server.sock ]] || [[ -S /var/run/redis/redis.sock ]]; then
         return 0
@@ -1543,13 +1550,24 @@ collect_mysql_metrics() {
 
     # Build mysql options array for safe command execution
     local -a mysql_opts=()
-    if [[ -f /etc/mysql/debian.cnf ]] && [[ -r /etc/mysql/debian.cnf ]]; then
-        mysql_opts=("--defaults-file=/etc/mysql/debian.cnf")
+    local use_sudo=false
+    if [[ -f /etc/mysql/debian.cnf ]]; then
+        if [[ -r /etc/mysql/debian.cnf ]]; then
+            mysql_opts=("--defaults-file=/etc/mysql/debian.cnf")
+        elif sudo -n test -r /etc/mysql/debian.cnf 2>/dev/null; then
+            # Can use sudo without password prompt
+            mysql_opts=("--defaults-file=/etc/mysql/debian.cnf")
+            use_sudo=true
+        fi
     fi
 
     # Helper function for safe MySQL execution
     run_mysql() {
-        "$mysql_cmd" "${mysql_opts[@]}" "$@"
+        if [[ "$use_sudo" == "true" ]]; then
+            sudo -n "$mysql_cmd" "${mysql_opts[@]}" "$@"
+        else
+            "$mysql_cmd" "${mysql_opts[@]}" "$@"
+        fi
     }
 
     # Test connection with retry logic for transient failures
@@ -1565,6 +1583,7 @@ collect_mysql_metrics() {
         # Try without options on first failure
         if [[ $retry_count -eq 0 ]] && [[ ${#mysql_opts[@]} -gt 0 ]]; then
             mysql_opts=()
+            use_sudo=false
             if run_mysql -e "SELECT 1" &>/dev/null 2>&1; then
                 connected=true
                 break
@@ -1573,6 +1592,15 @@ collect_mysql_metrics() {
         ((retry_count++))
         sleep 0.5
     done
+
+    # Try with sudo as last resort (for socket auth as root)
+    if [[ "$connected" != "true" ]] && sudo -n true 2>/dev/null; then
+        use_sudo=true
+        mysql_opts=()
+        if run_mysql -e "SELECT 1" &>/dev/null 2>&1; then
+            connected=true
+        fi
+    fi
 
     if [[ "$connected" != "true" ]]; then
         echo '{"available": false, "reason": "connection_failed"}'
@@ -1829,6 +1857,12 @@ analyze_mysql_metrics() {
 collect_redis_metrics() {
     if ! is_redis_available; then
         echo '{"available": false}'
+        return 0
+    fi
+
+    # Check if redis-cli is available for metrics collection
+    if ! command -v redis-cli &>/dev/null; then
+        echo '{"available": true, "metrics_available": false, "reason": "redis-cli not installed"}'
         return 0
     fi
 
