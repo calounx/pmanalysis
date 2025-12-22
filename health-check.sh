@@ -2983,9 +2983,19 @@ save_health_score() {
         mkdir -p "$RCA_HISTORY_DIR" 2>/dev/null || return 0
     fi
 
+    # Check if directory is writable
+    if [[ ! -w "$RCA_HISTORY_DIR" ]]; then
+        return 0
+    fi
+
     # Initialize history file if it doesn't exist
     if [[ ! -f "$RCA_HISTORY_FILE" ]]; then
         echo "[]" > "$RCA_HISTORY_FILE" 2>/dev/null || return 0
+    fi
+
+    # Check if file is writable
+    if [[ ! -w "$RCA_HISTORY_FILE" ]]; then
+        return 0
     fi
 
     # Append new entry
@@ -3262,9 +3272,12 @@ main() {
             ((waited++)) || true
         done
 
-        # Kill any remaining jobs
+        # Kill any remaining jobs and wait to suppress "Killed" messages
         for pid in $pid_nginx $pid_apache $pid_mysql $pid_redis $pid_wordops; do
-            kill -9 "$pid" 2>/dev/null || true
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+                wait "$pid" 2>/dev/null || true
+            fi
         done
 
         # Read results
