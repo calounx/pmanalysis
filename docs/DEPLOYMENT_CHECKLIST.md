@@ -9,7 +9,7 @@
 - [ ] All required packages available: `./health-check.sh --check-prerequisites`
 
 ### Script Validation
-- [ ] Downloaded latest version: `./health-check.sh --version` shows **2.0.0**
+- [ ] Downloaded latest version: `./health-check.sh --version` shows **2.1.0**
 - [ ] Script is executable: `ls -la health-check.sh`
 - [ ] Quick validation passes: `./validate-deployment.sh` shows **8/8 passed**
 - [ ] Manual test run successful: `./health-check.sh`
@@ -170,6 +170,6 @@ echo "$(date -Iseconds) Rollback: [REASON]" >> /var/log/rollback.log
 
 ---
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Last Updated**: 2025-12-22
 **Next Review**: 2026-01-22
