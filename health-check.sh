@@ -2462,11 +2462,11 @@ collect_postgresql_metrics() {
     max_connections=$(run_psql "SHOW max_connections;" | tr -d ' ')
     active_connections=$(run_psql "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';" | tr -d ' ')
     idle_connections=$(run_psql "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle';" | tr -d ' ')
-    local total_connections=$((active_connections + idle_connections))
+    local total_connections=$((${active_connections:-0} + ${idle_connections:-0}))
 
     # Connection utilization
     local conn_percent=0
-    if [[ $max_connections -gt 0 ]]; then
+    if [[ ${max_connections:-0} -gt 0 ]]; then
         conn_percent=$(echo "scale=1; 100 * $total_connections / $max_connections" | bc)
     fi
 
@@ -3121,12 +3121,12 @@ collect_dovecot_metrics() {
         pop3_connections=$(doveadm who -1 2>/dev/null | grep -c "pop3" || echo "0")
     fi
 
-    local total_connections=$((imap_connections + pop3_connections))
+    local total_connections=$((${imap_connections:-0} + ${pop3_connections:-0}))
 
     jq -nc \
         --arg avail "true" \
-        --arg imap "$imap_connections" \
-        --arg pop3 "$pop3_connections" \
+        --arg imap "${imap_connections:-0}" \
+        --arg pop3 "${pop3_connections:-0}" \
         --arg total "$total_connections" \
         '{
             available: true,
@@ -4473,12 +4473,17 @@ main() {
             fi
         done
 
-        # Read results
-        nginx_json=$(cat "$temp_dir/nginx.json" 2>/dev/null || echo '{"available": false}')
-        apache_json=$(cat "$temp_dir/apache.json" 2>/dev/null || echo '{"available": false}')
-        mysql_json=$(cat "$temp_dir/mysql.json" 2>/dev/null || echo '{"available": false}')
-        redis_json=$(cat "$temp_dir/redis.json" 2>/dev/null || echo '{"available": false}')
-        wordops_json=$(cat "$temp_dir/wordops.json" 2>/dev/null || echo '{"available": false}')
+        # Read results with validation (empty files get default JSON)
+        nginx_json=$(cat "$temp_dir/nginx.json" 2>/dev/null)
+        [[ -z "$nginx_json" ]] && nginx_json='{"available": false}'
+        apache_json=$(cat "$temp_dir/apache.json" 2>/dev/null)
+        [[ -z "$apache_json" ]] && apache_json='{"available": false}'
+        mysql_json=$(cat "$temp_dir/mysql.json" 2>/dev/null)
+        [[ -z "$mysql_json" ]] && mysql_json='{"available": false}'
+        redis_json=$(cat "$temp_dir/redis.json" 2>/dev/null)
+        [[ -z "$redis_json" ]] && redis_json='{"available": false}'
+        wordops_json=$(cat "$temp_dir/wordops.json" 2>/dev/null)
+        [[ -z "$wordops_json" ]] && wordops_json='{"available": false}'
 
         # Cleanup temp directory
         rm -rf "$temp_dir"
@@ -4584,20 +4589,33 @@ main() {
             fi
         done
 
-        # Read results
-        postgresql_json=$(cat "$ext_temp_dir/postgresql.json" 2>/dev/null || echo '{"available": false}')
-        memcached_json=$(cat "$ext_temp_dir/memcached.json" 2>/dev/null || echo '{"available": false}')
-        mongodb_json=$(cat "$ext_temp_dir/mongodb.json" 2>/dev/null || echo '{"available": false}')
-        elasticsearch_json=$(cat "$ext_temp_dir/elasticsearch.json" 2>/dev/null || echo '{"available": false}')
-        rabbitmq_json=$(cat "$ext_temp_dir/rabbitmq.json" 2>/dev/null || echo '{"available": false}')
-        fail2ban_json=$(cat "$ext_temp_dir/fail2ban.json" 2>/dev/null || echo '{"available": false}')
-        docker_json=$(cat "$ext_temp_dir/docker.json" 2>/dev/null || echo '{"available": false}')
-        postfix_json=$(cat "$ext_temp_dir/postfix.json" 2>/dev/null || echo '{"available": false}')
-        dovecot_json=$(cat "$ext_temp_dir/dovecot.json" 2>/dev/null || echo '{"available": false}')
-        prometheus_json=$(cat "$ext_temp_dir/prometheus.json" 2>/dev/null || echo '{"available": false}')
-        grafana_json=$(cat "$ext_temp_dir/grafana.json" 2>/dev/null || echo '{"available": false}')
-        loki_json=$(cat "$ext_temp_dir/loki.json" 2>/dev/null || echo '{"available": false}')
-        alertmanager_json=$(cat "$ext_temp_dir/alertmanager.json" 2>/dev/null || echo '{"available": false}')
+        # Read results with validation (empty files get default JSON)
+        postgresql_json=$(cat "$ext_temp_dir/postgresql.json" 2>/dev/null)
+        [[ -z "$postgresql_json" ]] && postgresql_json='{"available": false}'
+        memcached_json=$(cat "$ext_temp_dir/memcached.json" 2>/dev/null)
+        [[ -z "$memcached_json" ]] && memcached_json='{"available": false}'
+        mongodb_json=$(cat "$ext_temp_dir/mongodb.json" 2>/dev/null)
+        [[ -z "$mongodb_json" ]] && mongodb_json='{"available": false}'
+        elasticsearch_json=$(cat "$ext_temp_dir/elasticsearch.json" 2>/dev/null)
+        [[ -z "$elasticsearch_json" ]] && elasticsearch_json='{"available": false}'
+        rabbitmq_json=$(cat "$ext_temp_dir/rabbitmq.json" 2>/dev/null)
+        [[ -z "$rabbitmq_json" ]] && rabbitmq_json='{"available": false}'
+        fail2ban_json=$(cat "$ext_temp_dir/fail2ban.json" 2>/dev/null)
+        [[ -z "$fail2ban_json" ]] && fail2ban_json='{"available": false}'
+        docker_json=$(cat "$ext_temp_dir/docker.json" 2>/dev/null)
+        [[ -z "$docker_json" ]] && docker_json='{"available": false}'
+        postfix_json=$(cat "$ext_temp_dir/postfix.json" 2>/dev/null)
+        [[ -z "$postfix_json" ]] && postfix_json='{"available": false}'
+        dovecot_json=$(cat "$ext_temp_dir/dovecot.json" 2>/dev/null)
+        [[ -z "$dovecot_json" ]] && dovecot_json='{"available": false}'
+        prometheus_json=$(cat "$ext_temp_dir/prometheus.json" 2>/dev/null)
+        [[ -z "$prometheus_json" ]] && prometheus_json='{"available": false}'
+        grafana_json=$(cat "$ext_temp_dir/grafana.json" 2>/dev/null)
+        [[ -z "$grafana_json" ]] && grafana_json='{"available": false}'
+        loki_json=$(cat "$ext_temp_dir/loki.json" 2>/dev/null)
+        [[ -z "$loki_json" ]] && loki_json='{"available": false}'
+        alertmanager_json=$(cat "$ext_temp_dir/alertmanager.json" 2>/dev/null)
+        [[ -z "$alertmanager_json" ]] && alertmanager_json='{"available": false}'
 
         rm -rf "$ext_temp_dir"
     fi
