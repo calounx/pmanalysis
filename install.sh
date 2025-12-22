@@ -204,24 +204,34 @@ setup_script() {
 setup_systemd_timer() {
     log_info "Setting up systemd timer for automated monitoring..."
 
-    # Create dedicated user for health checks (script refuses to run as root)
-    if ! id -u healthcheck &>/dev/null; then
-        useradd --system --no-create-home --shell /usr/sbin/nologin healthcheck
-        log_info "Created healthcheck user"
+    # Get the actual user who invoked sudo (not root)
+    local run_user="${SUDO_USER:-$USER}"
+    local run_group
+    run_group=$(id -gn "$run_user" 2>/dev/null || echo "$run_user")
+
+    if [[ -z "$run_user" ]] || [[ "$run_user" == "root" ]]; then
+        log_error "Cannot determine non-root user for systemd service"
+        log_error "Please run this script with: sudo ./install.sh"
+        return 1
     fi
 
-    # Configure sudo for healthcheck user
-    cat > /etc/sudoers.d/healthcheck <<'SUDOERS'
-# Allow healthcheck user to run specific commands for system monitoring
-healthcheck ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl, /usr/bin/fail2ban-client, /usr/sbin/postqueue, /usr/bin/mailq
+    log_info "Systemd service will run as user: $run_user"
+
+    # Configure sudo for the user (if not already in sudo group)
+    if ! groups "$run_user" | grep -qE '\b(sudo|wheel)\b'; then
+        log_warning "User $run_user is not in sudo group, adding sudoers entry..."
+        cat > /etc/sudoers.d/health-check <<SUDOERS
+# Allow $run_user to run health-check commands without password
+$run_user ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl, /usr/bin/fail2ban-client, /usr/sbin/postqueue, /usr/bin/mailq
 SUDOERS
-    chmod 0440 /etc/sudoers.d/healthcheck
+        chmod 0440 /etc/sudoers.d/health-check
+    fi
 
-    # Set ownership of history directory
-    chown healthcheck:healthcheck /var/lib/health-check
+    # Set ownership of history directory to the actual user
+    chown "$run_user:$run_group" /var/lib/health-check
 
-    # Create systemd service file
-    cat > /etc/systemd/system/health-check.service <<'EOF'
+    # Create systemd service file with the actual user
+    cat > /etc/systemd/system/health-check.service <<EOF
 [Unit]
 Description=System Health Monitor
 After=network.target
@@ -231,8 +241,8 @@ Type=oneshot
 ExecStart=/usr/local/bin/health-check.sh --json
 StandardOutput=append:/var/log/health-check.log
 StandardError=append:/var/log/health-check-error.log
-User=healthcheck
-Group=healthcheck
+User=$run_user
+Group=$run_group
 
 [Install]
 WantedBy=multi-user.target
