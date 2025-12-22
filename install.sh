@@ -204,6 +204,22 @@ setup_script() {
 setup_systemd_timer() {
     log_info "Setting up systemd timer for automated monitoring..."
 
+    # Create dedicated user for health checks (script refuses to run as root)
+    if ! id -u healthcheck &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin healthcheck
+        log_info "Created healthcheck user"
+    fi
+
+    # Configure sudo for healthcheck user
+    cat > /etc/sudoers.d/healthcheck <<'SUDOERS'
+# Allow healthcheck user to run specific commands for system monitoring
+healthcheck ALL=(root) NOPASSWD: /usr/bin/dmesg, /usr/bin/journalctl, /usr/bin/fail2ban-client, /usr/sbin/postqueue, /usr/bin/mailq
+SUDOERS
+    chmod 0440 /etc/sudoers.d/healthcheck
+
+    # Set ownership of history directory
+    chown healthcheck:healthcheck /var/lib/health-check
+
     # Create systemd service file
     cat > /etc/systemd/system/health-check.service <<'EOF'
 [Unit]
@@ -215,7 +231,8 @@ Type=oneshot
 ExecStart=/usr/local/bin/health-check.sh --json
 StandardOutput=append:/var/log/health-check.log
 StandardError=append:/var/log/health-check-error.log
-User=root
+User=healthcheck
+Group=healthcheck
 
 [Install]
 WantedBy=multi-user.target
@@ -299,7 +316,7 @@ main() {
     echo ""
     echo "╔════════════════════════════════════════════════════╗"
     echo "║     System Health Monitor - Installation          ║"
-    echo "║     Version 2.1.0                                  ║"
+    echo "║     Version 2.2.0                                  ║"
     echo "╚════════════════════════════════════════════════════╝"
     echo ""
 
