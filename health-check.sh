@@ -1091,6 +1091,9 @@ is_apache_available() {
     # Check systemd services
     (command -v apache2 &>/dev/null || command -v httpd &>/dev/null) && \
     (systemctl is-active --quiet apache2 2>/dev/null || systemctl is-active --quiet httpd 2>/dev/null) && return 0
+    # Check for running process
+    pgrep -x apache2 &>/dev/null && return 0
+    pgrep -x httpd &>/dev/null && return 0
     # Check for Docker container
     docker ps --format '{{.Names}}' 2>/dev/null | grep -qiE 'apache|httpd' && return 0
     return 1
@@ -1169,7 +1172,7 @@ is_postgresql_available() {
 
 is_memcached_available() {
     # Check systemd service
-    command -v memcached &>/dev/null && systemctl is-active --quiet memcached 2>/dev/null && return 0
+    systemctl is-active --quiet memcached 2>/dev/null && return 0
     # Check for running process
     pgrep -x memcached &>/dev/null && return 0
     # Check for Docker container
@@ -1179,10 +1182,8 @@ is_memcached_available() {
 
 is_mongodb_available() {
     # Check systemd service
-    if command -v mongosh &>/dev/null || command -v mongo &>/dev/null; then
-        systemctl is-active --quiet mongod 2>/dev/null && return 0
-        systemctl is-active --quiet mongodb 2>/dev/null && return 0
-    fi
+    systemctl is-active --quiet mongod 2>/dev/null && return 0
+    systemctl is-active --quiet mongodb 2>/dev/null && return 0
     # Check for running process
     pgrep -x mongod &>/dev/null && return 0
     # Check for Docker container
@@ -1204,7 +1205,7 @@ is_elasticsearch_available() {
 
 is_rabbitmq_available() {
     # Check systemd service
-    command -v rabbitmqctl &>/dev/null && systemctl is-active --quiet rabbitmq-server 2>/dev/null && return 0
+    systemctl is-active --quiet rabbitmq-server 2>/dev/null && return 0
     # Check for running process
     pgrep -f "beam.*rabbit" &>/dev/null && return 0
     # Check for Docker container
@@ -1213,15 +1214,27 @@ is_rabbitmq_available() {
 }
 
 is_fail2ban_available() {
-    command -v fail2ban-client &>/dev/null && systemctl is-active --quiet fail2ban 2>/dev/null
+    # Check systemd service
+    systemctl is-active --quiet fail2ban 2>/dev/null && return 0
+    # Check for running process
+    pgrep -f "fail2ban-server" &>/dev/null && return 0
+    return 1
 }
 
 is_postfix_available() {
-    command -v postfix &>/dev/null && systemctl is-active --quiet postfix 2>/dev/null
+    # Check systemd service
+    systemctl is-active --quiet postfix 2>/dev/null && return 0
+    # Check for running process (master is the main postfix process)
+    pgrep -x master &>/dev/null && [[ -d /var/spool/postfix ]] && return 0
+    return 1
 }
 
 is_dovecot_available() {
-    command -v dovecot &>/dev/null && systemctl is-active --quiet dovecot 2>/dev/null
+    # Check systemd service
+    systemctl is-active --quiet dovecot 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x dovecot &>/dev/null && return 0
+    return 1
 }
 
 is_prometheus_available() {
