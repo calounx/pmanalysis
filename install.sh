@@ -299,7 +299,7 @@ main() {
     echo ""
     echo "╔════════════════════════════════════════════════════╗"
     echo "║     System Health Monitor - Installation          ║"
-    echo "║     Version 1.3.0                                  ║"
+    echo "║     Version 2.0.0                                  ║"
     echo "╚════════════════════════════════════════════════════╝"
     echo ""
 

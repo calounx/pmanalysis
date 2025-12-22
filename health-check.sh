@@ -3,7 +3,7 @@
 # Debian 12 System Health Analyzer
 # Production-grade health monitoring script
 #
-# Version: 1.0.0
+# Version: 2.0.0
 # Author: CalouNX (DevOps/SRE)
 # License: MIT
 #######################################
@@ -12,7 +12,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Script metadata
-readonly SCRIPT_VERSION="1.3.0"
+readonly SCRIPT_VERSION="2.0.0"
 # SC2155: Declare and assign separately
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
@@ -49,6 +49,52 @@ readonly FAILED_SERVICES_CRITICAL=1
 readonly ZOMBIE_PROCESSES_WARNING=5
 # Note: DEFUNCT_PROCESSES are counted as ZOMBIE_PROCESSES (they're the same)
 readonly D_STATE_PROCESSES_WARNING=2
+
+# Thresholds - Nginx
+readonly NGINX_CONNECTIONS_WARNING=800
+readonly NGINX_CONNECTIONS_CRITICAL=1000
+readonly NGINX_REQUESTS_PER_SEC_WARNING=1000
+readonly NGINX_REQUESTS_PER_SEC_CRITICAL=5000
+readonly NGINX_ERROR_RATE_WARNING=5       # Percentage of 4xx/5xx responses
+readonly NGINX_ERROR_RATE_CRITICAL=15
+
+# Thresholds - Apache
+readonly APACHE_BUSY_WORKERS_WARNING=80   # Percentage of MaxRequestWorkers
+readonly APACHE_BUSY_WORKERS_CRITICAL=95
+readonly APACHE_REQUESTS_PER_SEC_WARNING=500
+readonly APACHE_REQUESTS_PER_SEC_CRITICAL=2000
+readonly APACHE_ERROR_RATE_WARNING=5
+readonly APACHE_ERROR_RATE_CRITICAL=15
+
+# Thresholds - MySQL/MariaDB
+readonly MYSQL_CONNECTIONS_WARNING=80     # Percentage of max_connections
+readonly MYSQL_CONNECTIONS_CRITICAL=95
+readonly MYSQL_SLOW_QUERIES_WARNING=10    # Per minute
+readonly MYSQL_SLOW_QUERIES_CRITICAL=50
+readonly MYSQL_REPLICATION_LAG_WARNING=30 # Seconds
+readonly MYSQL_REPLICATION_LAG_CRITICAL=120
+readonly MYSQL_THREADS_RUNNING_WARNING=50
+readonly MYSQL_THREADS_RUNNING_CRITICAL=100
+readonly MYSQL_QUERY_CACHE_HIT_WARNING=80 # Percentage (below is warning)
+
+# Thresholds - Redis
+readonly REDIS_MEMORY_WARNING=80          # Percentage of maxmemory
+readonly REDIS_MEMORY_CRITICAL=95
+readonly REDIS_CONNECTIONS_WARNING=800
+readonly REDIS_CONNECTIONS_CRITICAL=950
+readonly REDIS_HIT_RATE_WARNING=90        # Below this is warning
+readonly REDIS_EVICTIONS_WARNING=100      # Per minute
+readonly REDIS_EVICTIONS_CRITICAL=1000
+readonly REDIS_REJECTED_CONNECTIONS_WARNING=1
+
+# Thresholds - WordOps/PHP-FPM
+readonly PHPFPM_ACTIVE_WARNING=80         # Percentage of max_children
+readonly PHPFPM_ACTIVE_CRITICAL=95
+readonly PHPFPM_QUEUE_WARNING=5           # Listen queue length
+readonly PHPFPM_QUEUE_CRITICAL=20
+readonly WORDOPS_CACHE_HIT_WARNING=70     # Cache hit percentage
+readonly SSL_EXPIRY_WARNING=30            # Days until expiry
+readonly SSL_EXPIRY_CRITICAL=7
 
 # Scoring weights (must sum to 100)
 readonly CPU_WEIGHT=20
@@ -888,6 +934,1007 @@ analyze_services_metrics() {
 }
 
 #######################################
+# Check if service is available
+#######################################
+
+is_nginx_available() {
+    command -v nginx &>/dev/null && systemctl is-active --quiet nginx 2>/dev/null
+}
+
+is_apache_available() {
+    (command -v apache2 &>/dev/null || command -v httpd &>/dev/null) && \
+    (systemctl is-active --quiet apache2 2>/dev/null || systemctl is-active --quiet httpd 2>/dev/null)
+}
+
+is_mysql_available() {
+    (command -v mysql &>/dev/null || command -v mariadb &>/dev/null) && \
+    (systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null || systemctl is-active --quiet mysqld 2>/dev/null)
+}
+
+is_redis_available() {
+    command -v redis-cli &>/dev/null && systemctl is-active --quiet redis-server 2>/dev/null
+}
+
+is_wordops_available() {
+    command -v wo &>/dev/null
+}
+
+is_phpfpm_available() {
+    pgrep -x "php-fpm" &>/dev/null || systemctl is-active --quiet "php*-fpm" 2>/dev/null
+}
+
+#######################################
+# Collect Nginx metrics
+# Requires: nginx with stub_status module enabled
+#######################################
+
+collect_nginx_metrics() {
+    if ! is_nginx_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local active_connections waiting reading writing requests_per_sec
+    local worker_processes worker_connections max_connections
+    local error_count total_requests error_rate
+
+    # Try to get stub_status from common locations
+    local stub_status=""
+    for url in "http://127.0.0.1/nginx_status" "http://localhost/nginx_status" "http://127.0.0.1:80/stub_status" "http://localhost/stub_status"; do
+        if stub_status=$(curl -s --connect-timeout 2 "$url" 2>/dev/null); then
+            if [[ "$stub_status" =~ Active\ connections ]]; then
+                break
+            fi
+        fi
+        stub_status=""
+    done
+
+    if [[ -n "$stub_status" ]]; then
+        # Parse stub_status output
+        active_connections=$(echo "$stub_status" | awk '/Active connections:/ {print $3}')
+        reading=$(echo "$stub_status" | awk '/Reading:/ {print $2}')
+        writing=$(echo "$stub_status" | awk '/Writing:/ {print $4}')
+        waiting=$(echo "$stub_status" | awk '/Waiting:/ {print $6}')
+
+        # Get requests from stub_status (3rd line: accepts handled requests)
+        local requests_line
+        requests_line=$(echo "$stub_status" | sed -n '3p' | awk '{print $3}')
+        requests_per_sec=${requests_line:-0}
+    else
+        # Fallback: get basic info from process stats
+        active_connections=$(ss -tan state established '( dport = :80 or dport = :443 )' 2>/dev/null | wc -l)
+        ((active_connections--)) || true  # Remove header
+        reading=0
+        writing=0
+        waiting=0
+        requests_per_sec=0
+    fi
+
+    # Get nginx configuration
+    worker_processes=$(nginx -T 2>/dev/null | grep -m1 "worker_processes" | awk '{print $2}' | tr -d ';' || echo "auto")
+    if [[ "$worker_processes" == "auto" ]]; then
+        worker_processes=$(nproc)
+    fi
+    worker_connections=$(nginx -T 2>/dev/null | grep -m1 "worker_connections" | awk '{print $2}' | tr -d ';' || echo "1024")
+    max_connections=$((worker_processes * worker_connections))
+
+    # Check error logs for recent errors (last 5 minutes)
+    local error_log="/var/log/nginx/error.log"
+    if [[ -r "$error_log" ]]; then
+        local five_min_ago
+        five_min_ago=$(date -d '5 minutes ago' '+%Y/%m/%d %H:%M' 2>/dev/null || echo "")
+        if [[ -n "$five_min_ago" ]]; then
+            error_count=$(awk -v since="$five_min_ago" '$0 >= since {count++} END {print count+0}' "$error_log" 2>/dev/null || echo "0")
+        else
+            error_count=$(tail -n 100 "$error_log" 2>/dev/null | grep -c "error" || echo "0")
+        fi
+    else
+        error_count=0
+    fi
+
+    # Check access logs for 4xx/5xx errors
+    local access_log="/var/log/nginx/access.log"
+    if [[ -r "$access_log" ]]; then
+        local recent_requests recent_errors
+        recent_requests=$(tail -n 1000 "$access_log" 2>/dev/null | wc -l || echo "1")
+        recent_errors=$(tail -n 1000 "$access_log" 2>/dev/null | awk '$9 ~ /^[45][0-9][0-9]$/ {count++} END {print count+0}' || echo "0")
+        if [[ $recent_requests -gt 0 ]]; then
+            error_rate=$(echo "scale=1; 100 * $recent_errors / $recent_requests" | bc)
+        else
+            error_rate="0.0"
+        fi
+    else
+        error_rate="0.0"
+    fi
+
+    # Get memory usage
+    local mem_usage_kb
+    mem_usage_kb=$(ps aux | grep '[n]ginx' | awk '{sum+=$6} END {print sum+0}')
+    local mem_usage_mb=$((mem_usage_kb / 1024))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg active "$active_connections" \
+        --arg reading "$reading" \
+        --arg writing "$writing" \
+        --arg waiting "$waiting" \
+        --arg rps "$requests_per_sec" \
+        --arg max "$max_connections" \
+        --arg errors "$error_count" \
+        --arg errrate "$error_rate" \
+        --arg mem "$mem_usage_mb" \
+        '{
+            available: ($avail | test("true")),
+            active_connections: ($active | tonumber),
+            reading: ($reading | tonumber),
+            writing: ($writing | tonumber),
+            waiting: ($waiting | tonumber),
+            requests_per_sec: ($rps | tonumber),
+            max_connections: ($max | tonumber),
+            error_count: ($errors | tonumber),
+            error_rate: ($errrate | tonumber),
+            memory_mb: ($mem | tonumber)
+        }'
+}
+
+#######################################
+# Analyze Nginx metrics
+#######################################
+
+analyze_nginx_metrics() {
+    local nginx_json="$1"
+
+    local available
+    available=$(echo "$nginx_json" | jq -r '.available // false')
+
+    if [[ "$available" != "true" ]]; then
+        echo "100"  # Not available, don't penalize
+        return 0
+    fi
+
+    local active_connections max_connections error_rate
+    active_connections=$(echo "$nginx_json" | jq -r '.active_connections // 0')
+    max_connections=$(echo "$nginx_json" | jq -r '.max_connections // 1024')
+    error_rate=$(echo "$nginx_json" | jq -r '.error_rate // 0')
+
+    local score=100
+    local connection_percent
+    connection_percent=$(echo "scale=1; 100 * $active_connections / $max_connections" | bc)
+
+    # Check connection thresholds
+    if (( $(echo "$active_connections >= $NGINX_CONNECTIONS_CRITICAL" | bc -l) )); then
+        add_alert "critical" "nginx" "Nginx connections critical" "$active_connections" "$NGINX_CONNECTIONS_CRITICAL"
+        RECOMMENDATIONS+=("Scale Nginx worker_connections or add load balancing")
+        score=$((score - 30))
+    elif (( $(echo "$active_connections >= $NGINX_CONNECTIONS_WARNING" | bc -l) )); then
+        add_alert "warning" "nginx" "Nginx connections high" "$active_connections" "$NGINX_CONNECTIONS_WARNING"
+        score=$((score - 15))
+    fi
+
+    # Check error rate
+    if (( $(echo "$error_rate >= $NGINX_ERROR_RATE_CRITICAL" | bc -l) )); then
+        add_alert "critical" "nginx" "Nginx error rate critical" "$error_rate" "$NGINX_ERROR_RATE_CRITICAL"
+        RECOMMENDATIONS+=("Check Nginx error logs: tail -f /var/log/nginx/error.log")
+        score=$((score - 25))
+    elif (( $(echo "$error_rate >= $NGINX_ERROR_RATE_WARNING" | bc -l) )); then
+        add_alert "warning" "nginx" "Nginx error rate elevated" "$error_rate" "$NGINX_ERROR_RATE_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Ensure score doesn't go negative
+    if [[ $score -lt 0 ]]; then
+        score=0
+    fi
+
+    echo "$score"
+}
+
+#######################################
+# Collect Apache metrics
+# Requires: mod_status enabled
+#######################################
+
+collect_apache_metrics() {
+    if ! is_apache_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local server_status=""
+    local busy_workers idle_workers total_slots requests_per_sec
+    local cpu_load uptime_seconds bytes_per_sec
+
+    # Try to get server-status from common locations
+    for url in "http://127.0.0.1/server-status?auto" "http://localhost/server-status?auto" "http://127.0.0.1:80/server-status?auto"; do
+        if server_status=$(curl -s --connect-timeout 2 "$url" 2>/dev/null); then
+            if [[ "$server_status" =~ BusyWorkers ]]; then
+                break
+            fi
+        fi
+        server_status=""
+    done
+
+    if [[ -n "$server_status" ]]; then
+        # Parse server-status output
+        busy_workers=$(echo "$server_status" | awk -F': ' '/^BusyWorkers:/ {print $2}')
+        idle_workers=$(echo "$server_status" | awk -F': ' '/^IdleWorkers:/ {print $2}')
+        requests_per_sec=$(echo "$server_status" | awk -F': ' '/^ReqPerSec:/ {print $2}')
+        cpu_load=$(echo "$server_status" | awk -F': ' '/^CPULoad:/ {print $2}')
+        uptime_seconds=$(echo "$server_status" | awk -F': ' '/^Uptime:/ {print $2}')
+        bytes_per_sec=$(echo "$server_status" | awk -F': ' '/^BytesPerSec:/ {print $2}')
+        total_slots=$(echo "$server_status" | awk -F': ' '/^ServerLimit:/ {print $2}')
+    else
+        # Fallback: get basic info from process stats
+        busy_workers=$(pgrep -c 'apache2\|httpd' 2>/dev/null || echo "0")
+        idle_workers=0
+        requests_per_sec=0
+        cpu_load=0
+        uptime_seconds=0
+        bytes_per_sec=0
+        total_slots=256  # Default MaxRequestWorkers
+    fi
+
+    # Ensure we have valid values
+    busy_workers=${busy_workers:-0}
+    idle_workers=${idle_workers:-0}
+    total_slots=${total_slots:-256}
+    requests_per_sec=${requests_per_sec:-0}
+
+    # Calculate busy percentage
+    local busy_percent
+    if [[ $total_slots -gt 0 ]]; then
+        busy_percent=$(echo "scale=1; 100 * $busy_workers / $total_slots" | bc)
+    else
+        busy_percent="0.0"
+    fi
+
+    # Check error logs for recent errors
+    local error_log=""
+    for log in "/var/log/apache2/error.log" "/var/log/httpd/error_log"; do
+        if [[ -r "$log" ]]; then
+            error_log="$log"
+            break
+        fi
+    done
+
+    local error_count=0
+    local error_rate="0.0"
+    if [[ -n "$error_log" && -r "$error_log" ]]; then
+        error_count=$(tail -n 100 "$error_log" 2>/dev/null | grep -ci "error" || echo "0")
+    fi
+
+    # Check access logs for 4xx/5xx errors
+    local access_log=""
+    for log in "/var/log/apache2/access.log" "/var/log/httpd/access_log"; do
+        if [[ -r "$log" ]]; then
+            access_log="$log"
+            break
+        fi
+    done
+
+    if [[ -n "$access_log" && -r "$access_log" ]]; then
+        local recent_requests recent_errors
+        recent_requests=$(tail -n 1000 "$access_log" 2>/dev/null | wc -l || echo "1")
+        recent_errors=$(tail -n 1000 "$access_log" 2>/dev/null | awk '$9 ~ /^[45][0-9][0-9]$/ {count++} END {print count+0}' || echo "0")
+        if [[ $recent_requests -gt 0 ]]; then
+            error_rate=$(echo "scale=1; 100 * $recent_errors / $recent_requests" | bc)
+        fi
+    fi
+
+    # Get memory usage
+    local mem_usage_kb
+    mem_usage_kb=$(ps aux | grep -E '[a]pache2|[h]ttpd' | awk '{sum+=$6} END {print sum+0}')
+    local mem_usage_mb=$((mem_usage_kb / 1024))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg busy "$busy_workers" \
+        --arg idle "$idle_workers" \
+        --arg total "$total_slots" \
+        --arg busypct "$busy_percent" \
+        --arg rps "$requests_per_sec" \
+        --arg cpu "${cpu_load:-0}" \
+        --arg errors "$error_count" \
+        --arg errrate "$error_rate" \
+        --arg mem "$mem_usage_mb" \
+        '{
+            available: ($avail | test("true")),
+            busy_workers: ($busy | tonumber),
+            idle_workers: ($idle | tonumber),
+            max_workers: ($total | tonumber),
+            busy_percent: ($busypct | tonumber),
+            requests_per_sec: ($rps | tonumber),
+            cpu_load: ($cpu | tonumber),
+            error_count: ($errors | tonumber),
+            error_rate: ($errrate | tonumber),
+            memory_mb: ($mem | tonumber)
+        }'
+}
+
+#######################################
+# Analyze Apache metrics
+#######################################
+
+analyze_apache_metrics() {
+    local apache_json="$1"
+
+    local available
+    available=$(echo "$apache_json" | jq -r '.available // false')
+
+    if [[ "$available" != "true" ]]; then
+        echo "100"  # Not available, don't penalize
+        return 0
+    fi
+
+    local busy_percent error_rate requests_per_sec
+    busy_percent=$(echo "$apache_json" | jq -r '.busy_percent // 0')
+    error_rate=$(echo "$apache_json" | jq -r '.error_rate // 0')
+    requests_per_sec=$(echo "$apache_json" | jq -r '.requests_per_sec // 0')
+
+    local score=100
+
+    # Check worker utilization
+    if (( $(echo "$busy_percent >= $APACHE_BUSY_WORKERS_CRITICAL" | bc -l) )); then
+        add_alert "critical" "apache" "Apache workers saturated" "$busy_percent" "$APACHE_BUSY_WORKERS_CRITICAL"
+        RECOMMENDATIONS+=("Increase Apache MaxRequestWorkers or scale horizontally")
+        score=$((score - 30))
+    elif (( $(echo "$busy_percent >= $APACHE_BUSY_WORKERS_WARNING" | bc -l) )); then
+        add_alert "warning" "apache" "Apache worker utilization high" "$busy_percent" "$APACHE_BUSY_WORKERS_WARNING"
+        score=$((score - 15))
+    fi
+
+    # Check error rate
+    if (( $(echo "$error_rate >= $APACHE_ERROR_RATE_CRITICAL" | bc -l) )); then
+        add_alert "critical" "apache" "Apache error rate critical" "$error_rate" "$APACHE_ERROR_RATE_CRITICAL"
+        RECOMMENDATIONS+=("Check Apache error logs for issues")
+        score=$((score - 25))
+    elif (( $(echo "$error_rate >= $APACHE_ERROR_RATE_WARNING" | bc -l) )); then
+        add_alert "warning" "apache" "Apache error rate elevated" "$error_rate" "$APACHE_ERROR_RATE_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Ensure score doesn't go negative
+    if [[ $score -lt 0 ]]; then
+        score=0
+    fi
+
+    echo "$score"
+}
+
+#######################################
+# Collect MySQL/MariaDB metrics
+#######################################
+
+collect_mysql_metrics() {
+    if ! is_mysql_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local mysql_cmd="mysql"
+    if command -v mariadb &>/dev/null; then
+        mysql_cmd="mariadb"
+    fi
+
+    # Try to connect (use defaults file if available)
+    local mysql_opts=""
+    if [[ -f ~/.my.cnf ]] || [[ -f /etc/mysql/debian.cnf ]]; then
+        if [[ -f /etc/mysql/debian.cnf ]] && [[ -r /etc/mysql/debian.cnf ]]; then
+            mysql_opts="--defaults-file=/etc/mysql/debian.cnf"
+        fi
+    fi
+
+    # Test connection
+    if ! $mysql_cmd $mysql_opts -e "SELECT 1" &>/dev/null 2>&1; then
+        # Try without options
+        if ! $mysql_cmd -e "SELECT 1" &>/dev/null 2>&1; then
+            echo '{"available": false, "reason": "connection_failed"}'
+            return 0
+        fi
+        mysql_opts=""
+    fi
+
+    # Get status variables
+    local status_output
+    status_output=$($mysql_cmd $mysql_opts -N -e "SHOW GLOBAL STATUS" 2>/dev/null || echo "")
+
+    if [[ -z "$status_output" ]]; then
+        echo '{"available": false, "reason": "no_status"}'
+        return 0
+    fi
+
+    # Parse status variables
+    local threads_connected max_connections threads_running
+    local slow_queries questions uptime
+    local qcache_hits qcache_inserts
+    local bytes_received bytes_sent
+    local aborted_connects aborted_clients
+
+    threads_connected=$(echo "$status_output" | awk '/^Threads_connected\t/ {print $2}')
+    threads_running=$(echo "$status_output" | awk '/^Threads_running\t/ {print $2}')
+    slow_queries=$(echo "$status_output" | awk '/^Slow_queries\t/ {print $2}')
+    questions=$(echo "$status_output" | awk '/^Questions\t/ {print $2}')
+    uptime=$(echo "$status_output" | awk '/^Uptime\t/ {print $2}')
+    qcache_hits=$(echo "$status_output" | awk '/^Qcache_hits\t/ {print $2}')
+    qcache_inserts=$(echo "$status_output" | awk '/^Qcache_inserts\t/ {print $2}')
+    bytes_received=$(echo "$status_output" | awk '/^Bytes_received\t/ {print $2}')
+    bytes_sent=$(echo "$status_output" | awk '/^Bytes_sent\t/ {print $2}')
+    aborted_connects=$(echo "$status_output" | awk '/^Aborted_connects\t/ {print $2}')
+    aborted_clients=$(echo "$status_output" | awk '/^Aborted_clients\t/ {print $2}')
+
+    # Get variables
+    local variables_output
+    variables_output=$($mysql_cmd $mysql_opts -N -e "SHOW GLOBAL VARIABLES LIKE 'max_connections'" 2>/dev/null || echo "")
+    max_connections=$(echo "$variables_output" | awk '{print $2}')
+    max_connections=${max_connections:-151}
+
+    # Calculate derived metrics
+    local connection_percent queries_per_sec slow_per_minute
+    threads_connected=${threads_connected:-0}
+    connection_percent=$(echo "scale=1; 100 * $threads_connected / $max_connections" | bc)
+
+    uptime=${uptime:-1}
+    questions=${questions:-0}
+    queries_per_sec=$(echo "scale=1; $questions / $uptime" | bc)
+
+    # Slow queries per minute (normalized by uptime)
+    slow_queries=${slow_queries:-0}
+    slow_per_minute=$(echo "scale=2; 60 * $slow_queries / $uptime" | bc)
+
+    # Query cache hit rate
+    qcache_hits=${qcache_hits:-0}
+    qcache_inserts=${qcache_inserts:-0}
+    local cache_hit_rate="0.0"
+    local total_cache=$((qcache_hits + qcache_inserts))
+    if [[ $total_cache -gt 0 ]]; then
+        cache_hit_rate=$(echo "scale=1; 100 * $qcache_hits / $total_cache" | bc)
+    fi
+
+    # Check replication status (if slave)
+    local replication_lag=0
+    local is_slave="false"
+    local slave_status
+    slave_status=$($mysql_cmd $mysql_opts -N -e "SHOW SLAVE STATUS\G" 2>/dev/null || echo "")
+    if [[ -n "$slave_status" ]]; then
+        is_slave="true"
+        replication_lag=$(echo "$slave_status" | awk '/Seconds_Behind_Master:/ {print $2}')
+        replication_lag=${replication_lag:-0}
+        if [[ "$replication_lag" == "NULL" ]]; then
+            replication_lag=0
+        fi
+    fi
+
+    # Get InnoDB metrics
+    local innodb_buffer_pool_size innodb_buffer_pool_used buffer_pool_percent
+    innodb_buffer_pool_size=$($mysql_cmd $mysql_opts -N -e "SHOW GLOBAL VARIABLES LIKE 'innodb_buffer_pool_size'" 2>/dev/null | awk '{print $2}')
+    innodb_buffer_pool_used=$(echo "$status_output" | awk '/^Innodb_buffer_pool_bytes_data\t/ {print $2}')
+    innodb_buffer_pool_size=${innodb_buffer_pool_size:-0}
+    innodb_buffer_pool_used=${innodb_buffer_pool_used:-0}
+
+    if [[ $innodb_buffer_pool_size -gt 0 ]]; then
+        buffer_pool_percent=$(echo "scale=1; 100 * $innodb_buffer_pool_used / $innodb_buffer_pool_size" | bc)
+    else
+        buffer_pool_percent="0.0"
+    fi
+
+    jq -nc \
+        --arg avail "true" \
+        --arg conn "$threads_connected" \
+        --arg maxconn "$max_connections" \
+        --arg connpct "$connection_percent" \
+        --arg running "${threads_running:-0}" \
+        --arg qps "$queries_per_sec" \
+        --arg slow "$slow_per_minute" \
+        --arg cachehit "$cache_hit_rate" \
+        --arg slave "$is_slave" \
+        --arg replag "$replication_lag" \
+        --arg bufferpct "$buffer_pool_percent" \
+        --arg abortconn "${aborted_connects:-0}" \
+        --arg abortcli "${aborted_clients:-0}" \
+        '{
+            available: ($avail | test("true")),
+            connections: ($conn | tonumber),
+            max_connections: ($maxconn | tonumber),
+            connection_percent: ($connpct | tonumber),
+            threads_running: ($running | tonumber),
+            queries_per_sec: ($qps | tonumber),
+            slow_queries_per_min: ($slow | tonumber),
+            query_cache_hit_rate: ($cachehit | tonumber),
+            is_replica: ($slave | test("true")),
+            replication_lag_sec: ($replag | tonumber),
+            buffer_pool_percent: ($bufferpct | tonumber),
+            aborted_connections: ($abortconn | tonumber),
+            aborted_clients: ($abortcli | tonumber)
+        }'
+}
+
+#######################################
+# Analyze MySQL/MariaDB metrics
+#######################################
+
+analyze_mysql_metrics() {
+    local mysql_json="$1"
+
+    local available
+    available=$(echo "$mysql_json" | jq -r '.available // false')
+
+    if [[ "$available" != "true" ]]; then
+        echo "100"  # Not available, don't penalize
+        return 0
+    fi
+
+    local connection_percent threads_running slow_queries_per_min
+    local is_replica replication_lag_sec
+    connection_percent=$(echo "$mysql_json" | jq -r '.connection_percent // 0')
+    threads_running=$(echo "$mysql_json" | jq -r '.threads_running // 0')
+    slow_queries_per_min=$(echo "$mysql_json" | jq -r '.slow_queries_per_min // 0')
+    is_replica=$(echo "$mysql_json" | jq -r '.is_replica // false')
+    replication_lag_sec=$(echo "$mysql_json" | jq -r '.replication_lag_sec // 0')
+
+    local score=100
+
+    # Check connection utilization
+    if (( $(echo "$connection_percent >= $MYSQL_CONNECTIONS_CRITICAL" | bc -l) )); then
+        add_alert "critical" "mysql" "MySQL connections critical" "$connection_percent" "$MYSQL_CONNECTIONS_CRITICAL"
+        RECOMMENDATIONS+=("Increase MySQL max_connections or optimize connection pooling")
+        score=$((score - 30))
+    elif (( $(echo "$connection_percent >= $MYSQL_CONNECTIONS_WARNING" | bc -l) )); then
+        add_alert "warning" "mysql" "MySQL connections high" "$connection_percent" "$MYSQL_CONNECTIONS_WARNING"
+        score=$((score - 15))
+    fi
+
+    # Check threads running
+    if (( $(echo "$threads_running >= $MYSQL_THREADS_RUNNING_CRITICAL" | bc -l) )); then
+        add_alert "critical" "mysql" "MySQL threads running critical" "$threads_running" "$MYSQL_THREADS_RUNNING_CRITICAL"
+        RECOMMENDATIONS+=("Check for long-running queries: SHOW PROCESSLIST")
+        score=$((score - 25))
+    elif (( $(echo "$threads_running >= $MYSQL_THREADS_RUNNING_WARNING" | bc -l) )); then
+        add_alert "warning" "mysql" "MySQL threads running high" "$threads_running" "$MYSQL_THREADS_RUNNING_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Check slow queries
+    if (( $(echo "$slow_queries_per_min >= $MYSQL_SLOW_QUERIES_CRITICAL" | bc -l) )); then
+        add_alert "critical" "mysql" "MySQL slow queries critical" "$slow_queries_per_min" "$MYSQL_SLOW_QUERIES_CRITICAL"
+        RECOMMENDATIONS+=("Enable slow query log and optimize problematic queries")
+        score=$((score - 20))
+    elif (( $(echo "$slow_queries_per_min >= $MYSQL_SLOW_QUERIES_WARNING" | bc -l) )); then
+        add_alert "warning" "mysql" "MySQL slow queries elevated" "$slow_queries_per_min" "$MYSQL_SLOW_QUERIES_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Check replication lag (if replica)
+    if [[ "$is_replica" == "true" ]]; then
+        if (( $(echo "$replication_lag_sec >= $MYSQL_REPLICATION_LAG_CRITICAL" | bc -l) )); then
+            add_alert "critical" "mysql" "MySQL replication lag critical" "$replication_lag_sec" "$MYSQL_REPLICATION_LAG_CRITICAL"
+            RECOMMENDATIONS+=("Check MySQL replication status and network connectivity to master")
+            score=$((score - 25))
+        elif (( $(echo "$replication_lag_sec >= $MYSQL_REPLICATION_LAG_WARNING" | bc -l) )); then
+            add_alert "warning" "mysql" "MySQL replication lag high" "$replication_lag_sec" "$MYSQL_REPLICATION_LAG_WARNING"
+            score=$((score - 10))
+        fi
+    fi
+
+    # Ensure score doesn't go negative
+    if [[ $score -lt 0 ]]; then
+        score=0
+    fi
+
+    echo "$score"
+}
+
+#######################################
+# Collect Redis metrics
+#######################################
+
+collect_redis_metrics() {
+    if ! is_redis_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Get Redis INFO
+    local redis_info
+    redis_info=$(redis-cli INFO 2>/dev/null || echo "")
+
+    if [[ -z "$redis_info" ]]; then
+        echo '{"available": false, "reason": "connection_failed"}'
+        return 0
+    fi
+
+    # Parse Redis INFO
+    local used_memory maxmemory memory_percent
+    local connected_clients blocked_clients
+    local keyspace_hits keyspace_misses hit_rate
+    local evicted_keys expired_keys
+    local rejected_connections total_connections
+    local instantaneous_ops_per_sec
+    local uptime_in_seconds
+
+    used_memory=$(echo "$redis_info" | awk -F: '/^used_memory:/ {print $2}' | tr -d '\r')
+    maxmemory=$(echo "$redis_info" | awk -F: '/^maxmemory:/ {print $2}' | tr -d '\r')
+    connected_clients=$(echo "$redis_info" | awk -F: '/^connected_clients:/ {print $2}' | tr -d '\r')
+    blocked_clients=$(echo "$redis_info" | awk -F: '/^blocked_clients:/ {print $2}' | tr -d '\r')
+    keyspace_hits=$(echo "$redis_info" | awk -F: '/^keyspace_hits:/ {print $2}' | tr -d '\r')
+    keyspace_misses=$(echo "$redis_info" | awk -F: '/^keyspace_misses:/ {print $2}' | tr -d '\r')
+    evicted_keys=$(echo "$redis_info" | awk -F: '/^evicted_keys:/ {print $2}' | tr -d '\r')
+    expired_keys=$(echo "$redis_info" | awk -F: '/^expired_keys:/ {print $2}' | tr -d '\r')
+    rejected_connections=$(echo "$redis_info" | awk -F: '/^rejected_connections:/ {print $2}' | tr -d '\r')
+    total_connections=$(echo "$redis_info" | awk -F: '/^total_connections_received:/ {print $2}' | tr -d '\r')
+    instantaneous_ops_per_sec=$(echo "$redis_info" | awk -F: '/^instantaneous_ops_per_sec:/ {print $2}' | tr -d '\r')
+    uptime_in_seconds=$(echo "$redis_info" | awk -F: '/^uptime_in_seconds:/ {print $2}' | tr -d '\r')
+
+    # Set defaults
+    used_memory=${used_memory:-0}
+    maxmemory=${maxmemory:-0}
+    connected_clients=${connected_clients:-0}
+    blocked_clients=${blocked_clients:-0}
+    keyspace_hits=${keyspace_hits:-0}
+    keyspace_misses=${keyspace_misses:-0}
+    evicted_keys=${evicted_keys:-0}
+    uptime_in_seconds=${uptime_in_seconds:-1}
+    rejected_connections=${rejected_connections:-0}
+    instantaneous_ops_per_sec=${instantaneous_ops_per_sec:-0}
+
+    # Calculate memory percentage
+    if [[ $maxmemory -gt 0 ]]; then
+        memory_percent=$(echo "scale=1; 100 * $used_memory / $maxmemory" | bc)
+    else
+        memory_percent="0.0"
+    fi
+
+    # Calculate hit rate
+    local total_ops=$((keyspace_hits + keyspace_misses))
+    if [[ $total_ops -gt 0 ]]; then
+        hit_rate=$(echo "scale=1; 100 * $keyspace_hits / $total_ops" | bc)
+    else
+        hit_rate="100.0"  # No operations = 100% hit rate (no misses)
+    fi
+
+    # Calculate evictions per minute
+    local evictions_per_min
+    evictions_per_min=$(echo "scale=2; 60 * $evicted_keys / $uptime_in_seconds" | bc)
+
+    # Get memory in MB
+    local used_memory_mb
+    used_memory_mb=$(echo "scale=0; $used_memory / 1048576" | bc)
+
+    # Get database info (key counts)
+    local total_keys=0
+    while IFS=: read -r db info; do
+        if [[ "$db" =~ ^db[0-9]+ ]]; then
+            local keys
+            keys=$(echo "$info" | awk -F'[,=]' '{print $2}')
+            total_keys=$((total_keys + keys))
+        fi
+    done <<< "$(echo "$redis_info" | grep '^db[0-9]')"
+
+    jq -nc \
+        --arg avail "true" \
+        --arg mempct "$memory_percent" \
+        --arg memmb "$used_memory_mb" \
+        --arg clients "$connected_clients" \
+        --arg blocked "$blocked_clients" \
+        --arg hitrate "$hit_rate" \
+        --arg evictmin "$evictions_per_min" \
+        --arg rejected "$rejected_connections" \
+        --arg ops "$instantaneous_ops_per_sec" \
+        --arg keys "$total_keys" \
+        '{
+            available: ($avail | test("true")),
+            memory_percent: ($mempct | tonumber),
+            memory_mb: ($memmb | tonumber),
+            connected_clients: ($clients | tonumber),
+            blocked_clients: ($blocked | tonumber),
+            hit_rate: ($hitrate | tonumber),
+            evictions_per_min: ($evictmin | tonumber),
+            rejected_connections: ($rejected | tonumber),
+            ops_per_sec: ($ops | tonumber),
+            total_keys: ($keys | tonumber)
+        }'
+}
+
+#######################################
+# Analyze Redis metrics
+#######################################
+
+analyze_redis_metrics() {
+    local redis_json="$1"
+
+    local available
+    available=$(echo "$redis_json" | jq -r '.available // false')
+
+    if [[ "$available" != "true" ]]; then
+        echo "100"  # Not available, don't penalize
+        return 0
+    fi
+
+    local memory_percent connected_clients hit_rate evictions_per_min rejected_connections
+    memory_percent=$(echo "$redis_json" | jq -r '.memory_percent // 0')
+    connected_clients=$(echo "$redis_json" | jq -r '.connected_clients // 0')
+    hit_rate=$(echo "$redis_json" | jq -r '.hit_rate // 100')
+    evictions_per_min=$(echo "$redis_json" | jq -r '.evictions_per_min // 0')
+    rejected_connections=$(echo "$redis_json" | jq -r '.rejected_connections // 0')
+
+    local score=100
+
+    # Check memory usage
+    if (( $(echo "$memory_percent >= $REDIS_MEMORY_CRITICAL" | bc -l) )); then
+        add_alert "critical" "redis" "Redis memory critical" "$memory_percent" "$REDIS_MEMORY_CRITICAL"
+        RECOMMENDATIONS+=("Increase Redis maxmemory or implement key eviction policies")
+        score=$((score - 30))
+    elif (( $(echo "$memory_percent >= $REDIS_MEMORY_WARNING" | bc -l) )); then
+        add_alert "warning" "redis" "Redis memory high" "$memory_percent" "$REDIS_MEMORY_WARNING"
+        score=$((score - 15))
+    fi
+
+    # Check connections
+    if (( $(echo "$connected_clients >= $REDIS_CONNECTIONS_CRITICAL" | bc -l) )); then
+        add_alert "critical" "redis" "Redis connections critical" "$connected_clients" "$REDIS_CONNECTIONS_CRITICAL"
+        score=$((score - 25))
+    elif (( $(echo "$connected_clients >= $REDIS_CONNECTIONS_WARNING" | bc -l) )); then
+        add_alert "warning" "redis" "Redis connections high" "$connected_clients" "$REDIS_CONNECTIONS_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Check hit rate (low hit rate is bad)
+    if (( $(echo "$hit_rate < $REDIS_HIT_RATE_WARNING" | bc -l) )); then
+        add_alert "warning" "redis" "Redis hit rate low" "$hit_rate" "$REDIS_HIT_RATE_WARNING"
+        RECOMMENDATIONS+=("Review Redis cache strategy - low hit rate indicates ineffective caching")
+        score=$((score - 10))
+    fi
+
+    # Check evictions
+    if (( $(echo "$evictions_per_min >= $REDIS_EVICTIONS_CRITICAL" | bc -l) )); then
+        add_alert "critical" "redis" "Redis evictions critical" "$evictions_per_min" "$REDIS_EVICTIONS_CRITICAL"
+        RECOMMENDATIONS+=("Increase Redis memory or review cache TTL policies")
+        score=$((score - 20))
+    elif (( $(echo "$evictions_per_min >= $REDIS_EVICTIONS_WARNING" | bc -l) )); then
+        add_alert "warning" "redis" "Redis evictions elevated" "$evictions_per_min" "$REDIS_EVICTIONS_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Check rejected connections
+    if (( $(echo "$rejected_connections >= $REDIS_REJECTED_CONNECTIONS_WARNING" | bc -l) )); then
+        add_alert "warning" "redis" "Redis rejected connections detected" "$rejected_connections" "$REDIS_REJECTED_CONNECTIONS_WARNING"
+        RECOMMENDATIONS+=("Increase Redis maxclients configuration")
+        score=$((score - 15))
+    fi
+
+    # Ensure score doesn't go negative
+    if [[ $score -lt 0 ]]; then
+        score=0
+    fi
+
+    echo "$score"
+}
+
+#######################################
+# Collect WordOps/PHP-FPM metrics
+#######################################
+
+collect_wordops_metrics() {
+    local wordops_installed=false
+    local phpfpm_available=false
+
+    if is_wordops_available; then
+        wordops_installed=true
+    fi
+
+    if is_phpfpm_available; then
+        phpfpm_available=true
+    fi
+
+    if [[ "$wordops_installed" == "false" && "$phpfpm_available" == "false" ]]; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Get PHP-FPM pools status
+    local pools=()
+    local total_active=0
+    local total_idle=0
+    local total_max=0
+    local total_queue=0
+
+    # Find PHP-FPM status pages
+    for version in 8.3 8.2 8.1 8.0 7.4 7.3 7.2; do
+        local status_url="http://127.0.0.1/status-php${version//./}"
+        local pool_status
+
+        if pool_status=$(curl -s --connect-timeout 2 "$status_url" 2>/dev/null); then
+            if [[ "$pool_status" =~ pool ]]; then
+                local pool_name active idle max_children listen_queue
+                pool_name=$(echo "$pool_status" | awk '/^pool:/ {print $2}')
+                active=$(echo "$pool_status" | awk '/^active processes:/ {print $3}')
+                idle=$(echo "$pool_status" | awk '/^idle processes:/ {print $3}')
+                max_children=$(echo "$pool_status" | awk '/^max children reached:/ {print $4}')
+                listen_queue=$(echo "$pool_status" | awk '/^listen queue:/ {print $3}')
+
+                total_active=$((total_active + ${active:-0}))
+                total_idle=$((total_idle + ${idle:-0}))
+                total_queue=$((total_queue + ${listen_queue:-0}))
+
+                pools+=("$pool_name:$version")
+            fi
+        fi
+    done
+
+    # Fallback: parse from process list
+    if [[ ${#pools[@]} -eq 0 ]]; then
+        local fpm_processes
+        fpm_processes=$(pgrep -c 'php-fpm' 2>/dev/null || echo "0")
+        total_active=$fpm_processes
+        total_idle=0
+    fi
+
+    # Get max_children from config (estimate)
+    local config_max=0
+    for conf in /etc/php/*/fpm/pool.d/*.conf /etc/php-fpm.d/*.conf; do
+        if [[ -r "$conf" ]]; then
+            local max
+            max=$(grep -h "pm.max_children" "$conf" 2>/dev/null | awk -F= '{print $2}' | tr -d ' ')
+            config_max=$((config_max + ${max:-0}))
+        fi
+    done
+
+    if [[ $config_max -eq 0 ]]; then
+        config_max=50  # Default assumption
+    fi
+    total_max=$config_max
+
+    # Calculate utilization
+    local fpm_percent
+    if [[ $total_max -gt 0 ]]; then
+        fpm_percent=$(echo "scale=1; 100 * $total_active / $total_max" | bc)
+    else
+        fpm_percent="0.0"
+    fi
+
+    # WordOps specific checks
+    local sites_count=0
+    local cache_status="unknown"
+    local ssl_issues=0
+
+    if [[ "$wordops_installed" == "true" ]]; then
+        # Count sites
+        sites_count=$(wo site list 2>/dev/null | wc -l || echo "0")
+
+        # Check cache status (Redis/Memcached)
+        if systemctl is-active --quiet redis-server 2>/dev/null; then
+            cache_status="redis"
+        elif systemctl is-active --quiet memcached 2>/dev/null; then
+            cache_status="memcached"
+        else
+            cache_status="none"
+        fi
+
+        # Check SSL certificate expiry for all sites
+        if command -v openssl &>/dev/null; then
+            for site_dir in /var/www/*/; do
+                local site_name
+                site_name=$(basename "$site_dir")
+                local cert_file="/etc/letsencrypt/live/$site_name/cert.pem"
+
+                if [[ -f "$cert_file" ]]; then
+                    local expiry_date expiry_epoch now_epoch days_until
+                    expiry_date=$(openssl x509 -enddate -noout -in "$cert_file" 2>/dev/null | cut -d= -f2)
+                    if [[ -n "$expiry_date" ]]; then
+                        expiry_epoch=$(date -d "$expiry_date" +%s 2>/dev/null || echo "0")
+                        now_epoch=$(date +%s)
+                        days_until=$(( (expiry_epoch - now_epoch) / 86400 ))
+
+                        if [[ $days_until -lt $SSL_EXPIRY_CRITICAL ]]; then
+                            ((ssl_issues++))
+                        fi
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    # Get PHP-FPM memory usage
+    local mem_usage_kb
+    mem_usage_kb=$(ps aux | grep '[p]hp-fpm' | awk '{sum+=$6} END {print sum+0}')
+    local mem_usage_mb=$((mem_usage_kb / 1024))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg wo "$wordops_installed" \
+        --arg fpm "$phpfpm_available" \
+        --arg active "$total_active" \
+        --arg idle "$total_idle" \
+        --arg max "$total_max" \
+        --arg fpmpct "$fpm_percent" \
+        --arg queue "$total_queue" \
+        --arg sites "$sites_count" \
+        --arg cache "$cache_status" \
+        --arg sslissues "$ssl_issues" \
+        --arg mem "$mem_usage_mb" \
+        --arg pools "${#pools[@]}" \
+        '{
+            available: ($avail | test("true")),
+            wordops_installed: ($wo | test("true")),
+            phpfpm_running: ($fpm | test("true")),
+            fpm_active_processes: ($active | tonumber),
+            fpm_idle_processes: ($idle | tonumber),
+            fpm_max_processes: ($max | tonumber),
+            fpm_utilization_percent: ($fpmpct | tonumber),
+            fpm_listen_queue: ($queue | tonumber),
+            sites_count: ($sites | tonumber),
+            cache_backend: $cache,
+            ssl_expiry_issues: ($sslissues | tonumber),
+            memory_mb: ($mem | tonumber),
+            pools_count: ($pools | tonumber)
+        }'
+}
+
+#######################################
+# Analyze WordOps/PHP-FPM metrics
+#######################################
+
+analyze_wordops_metrics() {
+    local wordops_json="$1"
+
+    local available
+    available=$(echo "$wordops_json" | jq -r '.available // false')
+
+    if [[ "$available" != "true" ]]; then
+        echo "100"  # Not available, don't penalize
+        return 0
+    fi
+
+    local fpm_utilization_percent fpm_listen_queue ssl_expiry_issues cache_backend
+    fpm_utilization_percent=$(echo "$wordops_json" | jq -r '.fpm_utilization_percent // 0')
+    fpm_listen_queue=$(echo "$wordops_json" | jq -r '.fpm_listen_queue // 0')
+    ssl_expiry_issues=$(echo "$wordops_json" | jq -r '.ssl_expiry_issues // 0')
+    cache_backend=$(echo "$wordops_json" | jq -r '.cache_backend // "unknown"')
+
+    local score=100
+
+    # Check PHP-FPM utilization
+    if (( $(echo "$fpm_utilization_percent >= $PHPFPM_ACTIVE_CRITICAL" | bc -l) )); then
+        add_alert "critical" "php-fpm" "PHP-FPM workers saturated" "$fpm_utilization_percent" "$PHPFPM_ACTIVE_CRITICAL"
+        RECOMMENDATIONS+=("Increase PHP-FPM pm.max_children or optimize PHP scripts")
+        score=$((score - 30))
+    elif (( $(echo "$fpm_utilization_percent >= $PHPFPM_ACTIVE_WARNING" | bc -l) )); then
+        add_alert "warning" "php-fpm" "PHP-FPM utilization high" "$fpm_utilization_percent" "$PHPFPM_ACTIVE_WARNING"
+        score=$((score - 15))
+    fi
+
+    # Check listen queue
+    if (( $(echo "$fpm_listen_queue >= $PHPFPM_QUEUE_CRITICAL" | bc -l) )); then
+        add_alert "critical" "php-fpm" "PHP-FPM listen queue critical" "$fpm_listen_queue" "$PHPFPM_QUEUE_CRITICAL"
+        RECOMMENDATIONS+=("PHP-FPM is queuing requests - increase workers or optimize code")
+        score=$((score - 25))
+    elif (( $(echo "$fpm_listen_queue >= $PHPFPM_QUEUE_WARNING" | bc -l) )); then
+        add_alert "warning" "php-fpm" "PHP-FPM listen queue building" "$fpm_listen_queue" "$PHPFPM_QUEUE_WARNING"
+        score=$((score - 10))
+    fi
+
+    # Check SSL expiry issues
+    if [[ $ssl_expiry_issues -gt 0 ]]; then
+        add_alert "critical" "ssl" "SSL certificates expiring soon" "$ssl_expiry_issues" "$SSL_EXPIRY_CRITICAL"
+        RECOMMENDATIONS+=("Renew SSL certificates: wo site update --letsencrypt=renew")
+        score=$((score - (ssl_expiry_issues * 10)))
+    fi
+
+    # Check cache backend
+    if [[ "$cache_backend" == "none" ]]; then
+        add_alert "warning" "wordops" "No cache backend detected" "0" "1"
+        RECOMMENDATIONS+=("Consider enabling Redis or Memcached for better performance")
+        score=$((score - 5))
+    fi
+
+    # Ensure score doesn't go negative
+    if [[ $score -lt 0 ]]; then
+        score=0
+    fi
+
+    echo "$score"
+}
+
+#######################################
 # Calculate overall health score
 #######################################
 
@@ -951,6 +1998,7 @@ deduplicate_recommendations() {
 generate_json_output() {
     local timestamp hostname status score
     local cpu_json mem_json disk_json net_json svc_json rca_json
+    local nginx_json apache_json mysql_json redis_json wordops_json
 
     timestamp="$1"
     hostname="$2"
@@ -962,6 +2010,11 @@ generate_json_output() {
     net_json="$8"
     svc_json="$9"
     rca_json="${10}"
+    nginx_json="${11:-{\}}"
+    apache_json="${12:-{\}}"
+    mysql_json="${13:-{\}}"
+    redis_json="${14:-{\}}"
+    wordops_json="${15:-{\}}"
 
     # S8: Deduplicate recommendations before output
     deduplicate_recommendations
@@ -990,11 +2043,16 @@ generate_json_output() {
         --argjson disk "$disk_json" \
         --argjson net "$net_json" \
         --argjson svc "$svc_json" \
+        --argjson nginx "$nginx_json" \
+        --argjson apache "$apache_json" \
+        --argjson mysql "$mysql_json" \
+        --argjson redis "$redis_json" \
+        --argjson wordops "$wordops_json" \
         --argjson alerts "$alerts_json" \
         --argjson recs "$recs_json" \
         --argjson rca "$rca_json" \
         '{
-            schema_version: "1.0.0",
+            schema_version: "2.0.0",
             script_version: $ver,
             timestamp: $ts,
             hostname: $host,
@@ -1005,7 +2063,12 @@ generate_json_output() {
                 memory: $mem,
                 disk: $disk,
                 network: $net,
-                services: $svc
+                services: $svc,
+                nginx: $nginx,
+                apache: $apache,
+                mysql: $mysql,
+                redis: $redis,
+                wordops: $wordops
             },
             alerts: $alerts,
             recommendations: $recs,
@@ -1082,6 +2145,84 @@ generate_markdown_output() {
     echo "$json_output" | jq -r '"- Failed Units: " + (.metrics.services.failed_units|length|tostring)'
     echo "$json_output" | jq -r '"- Zombie Processes: " + (.metrics.services.zombie_processes|tostring)'
     echo ""
+
+    # Nginx section (if available)
+    local nginx_available
+    nginx_available=$(echo "$json_output" | jq -r '.metrics.nginx.available // false')
+    if [[ "$nginx_available" == "true" ]]; then
+        echo "### Nginx"
+        echo "$json_output" | jq -r '"- Active Connections: " + (.metrics.nginx.active_connections|tostring)'
+        echo "$json_output" | jq -r '"- Max Connections: " + (.metrics.nginx.max_connections|tostring)'
+        echo "$json_output" | jq -r '"- Error Rate: " + (.metrics.nginx.error_rate|tostring) + "%"'
+        echo "$json_output" | jq -r '"- Memory: " + (.metrics.nginx.memory_mb|tostring) + "MB"'
+        echo ""
+    fi
+
+    # Apache section (if available)
+    local apache_available
+    apache_available=$(echo "$json_output" | jq -r '.metrics.apache.available // false')
+    if [[ "$apache_available" == "true" ]]; then
+        echo "### Apache"
+        echo "$json_output" | jq -r '"- Busy Workers: " + (.metrics.apache.busy_workers|tostring) + "/" + (.metrics.apache.max_workers|tostring) + " (" + (.metrics.apache.busy_percent|tostring) + "%)"'
+        echo "$json_output" | jq -r '"- Requests/sec: " + (.metrics.apache.requests_per_sec|tostring)'
+        echo "$json_output" | jq -r '"- Error Rate: " + (.metrics.apache.error_rate|tostring) + "%"'
+        echo "$json_output" | jq -r '"- Memory: " + (.metrics.apache.memory_mb|tostring) + "MB"'
+        echo ""
+    fi
+
+    # MySQL/MariaDB section (if available)
+    local mysql_available
+    mysql_available=$(echo "$json_output" | jq -r '.metrics.mysql.available // false')
+    if [[ "$mysql_available" == "true" ]]; then
+        echo "### MySQL/MariaDB"
+        echo "$json_output" | jq -r '"- Connections: " + (.metrics.mysql.connections|tostring) + "/" + (.metrics.mysql.max_connections|tostring) + " (" + (.metrics.mysql.connection_percent|tostring) + "%)"'
+        echo "$json_output" | jq -r '"- Threads Running: " + (.metrics.mysql.threads_running|tostring)'
+        echo "$json_output" | jq -r '"- Queries/sec: " + (.metrics.mysql.queries_per_sec|tostring)'
+        echo "$json_output" | jq -r '"- Slow Queries/min: " + (.metrics.mysql.slow_queries_per_min|tostring)'
+        local is_replica
+        is_replica=$(echo "$json_output" | jq -r '.metrics.mysql.is_replica // false')
+        if [[ "$is_replica" == "true" ]]; then
+            echo "$json_output" | jq -r '"- Replication Lag: " + (.metrics.mysql.replication_lag_sec|tostring) + "s"'
+        fi
+        echo ""
+    fi
+
+    # Redis section (if available)
+    local redis_available
+    redis_available=$(echo "$json_output" | jq -r '.metrics.redis.available // false')
+    if [[ "$redis_available" == "true" ]]; then
+        echo "### Redis"
+        echo "$json_output" | jq -r '"- Memory: " + (.metrics.redis.memory_mb|tostring) + "MB (" + (.metrics.redis.memory_percent|tostring) + "%)"'
+        echo "$json_output" | jq -r '"- Connected Clients: " + (.metrics.redis.connected_clients|tostring)'
+        echo "$json_output" | jq -r '"- Hit Rate: " + (.metrics.redis.hit_rate|tostring) + "%"'
+        echo "$json_output" | jq -r '"- Ops/sec: " + (.metrics.redis.ops_per_sec|tostring)'
+        echo "$json_output" | jq -r '"- Total Keys: " + (.metrics.redis.total_keys|tostring)'
+        echo ""
+    fi
+
+    # WordOps/PHP-FPM section (if available)
+    local wordops_available
+    wordops_available=$(echo "$json_output" | jq -r '.metrics.wordops.available // false')
+    if [[ "$wordops_available" == "true" ]]; then
+        local wordops_installed
+        wordops_installed=$(echo "$json_output" | jq -r '.metrics.wordops.wordops_installed // false')
+        if [[ "$wordops_installed" == "true" ]]; then
+            echo "### WordOps"
+            echo "$json_output" | jq -r '"- Sites: " + (.metrics.wordops.sites_count|tostring)'
+            echo "$json_output" | jq -r '"- Cache Backend: " + .metrics.wordops.cache_backend'
+            local ssl_issues
+            ssl_issues=$(echo "$json_output" | jq -r '.metrics.wordops.ssl_expiry_issues // 0')
+            if [[ $ssl_issues -gt 0 ]]; then
+                echo "$json_output" | jq -r '"- SSL Expiry Issues: " + (.metrics.wordops.ssl_expiry_issues|tostring) + " ⚠️"'
+            fi
+        fi
+        echo "### PHP-FPM"
+        echo "$json_output" | jq -r '"- Active Processes: " + (.metrics.wordops.fpm_active_processes|tostring) + "/" + (.metrics.wordops.fpm_max_processes|tostring) + " (" + (.metrics.wordops.fpm_utilization_percent|tostring) + "%)"'
+        echo "$json_output" | jq -r '"- Idle Processes: " + (.metrics.wordops.fpm_idle_processes|tostring)'
+        echo "$json_output" | jq -r '"- Listen Queue: " + (.metrics.wordops.fpm_listen_queue|tostring)'
+        echo "$json_output" | jq -r '"- Memory: " + (.metrics.wordops.memory_mb|tostring) + "MB"'
+        echo ""
+    fi
 
     # Root Cause Analysis
     local rca_enabled
@@ -1693,6 +2834,7 @@ main() {
     log_info "Collecting system metrics..."
 
     local cpu_json mem_json disk_json net_json svc_json
+    local nginx_json apache_json mysql_json redis_json wordops_json
 
     # Sequential collection with error handling
     if ! cpu_json=$(collect_cpu_metrics 2>&1); then
@@ -1720,6 +2862,34 @@ main() {
         svc_json='{}'
     fi
 
+    # Collect optional service metrics (v2.0.0)
+    log_info "Collecting optional service metrics..."
+
+    if ! nginx_json=$(collect_nginx_metrics 2>&1); then
+        log_debug "Nginx metrics collection skipped"
+        nginx_json='{"available": false}'
+    fi
+
+    if ! apache_json=$(collect_apache_metrics 2>&1); then
+        log_debug "Apache metrics collection skipped"
+        apache_json='{"available": false}'
+    fi
+
+    if ! mysql_json=$(collect_mysql_metrics 2>&1); then
+        log_debug "MySQL metrics collection skipped"
+        mysql_json='{"available": false}'
+    fi
+
+    if ! redis_json=$(collect_redis_metrics 2>&1); then
+        log_debug "Redis metrics collection skipped"
+        redis_json='{"available": false}'
+    fi
+
+    if ! wordops_json=$(collect_wordops_metrics 2>&1); then
+        log_debug "WordOps/PHP-FPM metrics collection skipped"
+        wordops_json='{"available": false}'
+    fi
+
     # Analyze metrics and calculate scores
     log_info "Analyzing metrics..."
 
@@ -1730,11 +2900,62 @@ main() {
     net_score=$(analyze_network_metrics "$net_json" || echo "50")
     svc_score=$(analyze_services_metrics "$svc_json" || echo "50")
 
+    # Analyze optional services (v2.0.0)
+    local nginx_score apache_score mysql_score redis_score wordops_score
+    nginx_score=$(analyze_nginx_metrics "$nginx_json" || echo "100")
+    apache_score=$(analyze_apache_metrics "$apache_json" || echo "100")
+    mysql_score=$(analyze_mysql_metrics "$mysql_json" || echo "100")
+    redis_score=$(analyze_redis_metrics "$redis_json" || echo "100")
+    wordops_score=$(analyze_wordops_metrics "$wordops_json" || echo "100")
+
     log_debug "Component scores - CPU: $cpu_score, Memory: $mem_score, Disk: $disk_score, Network: $net_score, Services: $svc_score"
+
+    # Check which optional services are available and factor them into the score
+    local optional_services_count=0
+    local optional_services_total=0
+
+    if [[ $(echo "$nginx_json" | jq -r '.available // false') == "true" ]]; then
+        ((optional_services_count++))
+        optional_services_total=$((optional_services_total + nginx_score))
+        log_debug "Nginx score: $nginx_score"
+    fi
+
+    if [[ $(echo "$apache_json" | jq -r '.available // false') == "true" ]]; then
+        ((optional_services_count++))
+        optional_services_total=$((optional_services_total + apache_score))
+        log_debug "Apache score: $apache_score"
+    fi
+
+    if [[ $(echo "$mysql_json" | jq -r '.available // false') == "true" ]]; then
+        ((optional_services_count++))
+        optional_services_total=$((optional_services_total + mysql_score))
+        log_debug "MySQL score: $mysql_score"
+    fi
+
+    if [[ $(echo "$redis_json" | jq -r '.available // false') == "true" ]]; then
+        ((optional_services_count++))
+        optional_services_total=$((optional_services_total + redis_score))
+        log_debug "Redis score: $redis_score"
+    fi
+
+    if [[ $(echo "$wordops_json" | jq -r '.available // false') == "true" ]]; then
+        ((optional_services_count++))
+        optional_services_total=$((optional_services_total + wordops_score))
+        log_debug "WordOps/PHP-FPM score: $wordops_score"
+    fi
 
     # Calculate overall health score
     local health_score
     health_score=$(calculate_health_score "$cpu_score" "$mem_score" "$disk_score" "$net_score" "$svc_score")
+
+    # Factor in optional services if any are present (10% weight for optional services combined)
+    if [[ $optional_services_count -gt 0 ]]; then
+        local optional_avg
+        optional_avg=$((optional_services_total / optional_services_count))
+        # Adjust: 90% base score + 10% optional services average
+        health_score=$(echo "scale=0; ($health_score * 90 + $optional_avg * 10) / 100" | bc)
+        log_debug "Optional services average: $optional_avg, Adjusted health score: $health_score"
+    fi
 
     local health_status
     health_status=$(get_health_status "$health_score")
@@ -1762,7 +2983,8 @@ main() {
     # Generate JSON
     local json_output
     json_output=$(generate_json_output "$timestamp" "$hostname" "$health_status" "$health_score" \
-        "$cpu_json" "$mem_json" "$disk_json" "$net_json" "$svc_json" "$rca_json")
+        "$cpu_json" "$mem_json" "$disk_json" "$net_json" "$svc_json" "$rca_json" \
+        "$nginx_json" "$apache_json" "$mysql_json" "$redis_json" "$wordops_json")
 
     # Output based on format
     local output

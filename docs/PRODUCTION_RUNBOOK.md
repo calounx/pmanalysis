@@ -526,6 +526,7 @@ echo "$(date -Iseconds) - Rollback initiated: [REASON]" >> /var/log/health-check
 
 | Date | Version | Change | Owner |
 |------|---------|--------|-------|
+| 2025-12-22 | 2.0.0 | Added nginx, apache, mysql, redis, wordops monitoring | DevOps Team |
 | 2025-12-20 | 1.1.0 | Initial production runbook | DevOps Team |
 
 ---

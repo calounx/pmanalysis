@@ -3,7 +3,7 @@
 > **Your Linux server's personal health assistant - diagnose issues in seconds, not hours**
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version 1.3.0"/>
+  <img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version 2.0.0"/>
   <img src="https://img.shields.io/badge/debian-12%20bookworm-red.svg" alt="Debian 12"/>
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/Status-Production%20Ready-success" alt="Production Ready"/>

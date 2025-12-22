@@ -442,5 +442,5 @@ Post-incident review scheduled: [Date/Time]
 
 ---
 
-**Last Updated**: 2025-12-20
-**Version**: 1.0.0
+**Last Updated**: 2025-12-22
+**Version**: 2.0.0
