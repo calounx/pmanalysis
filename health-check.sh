@@ -12,7 +12,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Script metadata
-readonly SCRIPT_VERSION="2.1.0"
+readonly SCRIPT_VERSION="2.2.0"
 # SC2155: Declare and assign separately
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
@@ -1152,6 +1152,147 @@ is_phpfpm_available() {
     systemctl is-active --quiet php8.3-fpm 2>/dev/null
 }
 
+is_postgresql_available() {
+    # Check systemd service
+    if command -v psql &>/dev/null; then
+        systemctl is-active --quiet postgresql 2>/dev/null && return 0
+        systemctl is-active --quiet postgresql@* 2>/dev/null && return 0
+    fi
+    # Check for running process
+    pgrep -x postgres &>/dev/null && return 0
+    pgrep -x postmaster &>/dev/null && return 0
+    # Check for Unix socket
+    [[ -S /var/run/postgresql/.s.PGSQL.5432 ]] && return 0
+    [[ -S /tmp/.s.PGSQL.5432 ]] && return 0
+    return 1
+}
+
+is_memcached_available() {
+    # Check systemd service
+    command -v memcached &>/dev/null && systemctl is-active --quiet memcached 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x memcached &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi memcached && return 0
+    return 1
+}
+
+is_mongodb_available() {
+    # Check systemd service
+    if command -v mongosh &>/dev/null || command -v mongo &>/dev/null; then
+        systemctl is-active --quiet mongod 2>/dev/null && return 0
+        systemctl is-active --quiet mongodb 2>/dev/null && return 0
+    fi
+    # Check for running process
+    pgrep -x mongod &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi mongo && return 0
+    return 1
+}
+
+is_elasticsearch_available() {
+    # Check systemd service
+    systemctl is-active --quiet elasticsearch 2>/dev/null && return 0
+    # Check for running process
+    pgrep -f "elasticsearch" &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi elasticsearch && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:9200" &>/dev/null && return 0
+    return 1
+}
+
+is_rabbitmq_available() {
+    # Check systemd service
+    command -v rabbitmqctl &>/dev/null && systemctl is-active --quiet rabbitmq-server 2>/dev/null && return 0
+    # Check for running process
+    pgrep -f "beam.*rabbit" &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi rabbit && return 0
+    return 1
+}
+
+is_fail2ban_available() {
+    command -v fail2ban-client &>/dev/null && systemctl is-active --quiet fail2ban 2>/dev/null
+}
+
+is_postfix_available() {
+    command -v postfix &>/dev/null && systemctl is-active --quiet postfix 2>/dev/null
+}
+
+is_dovecot_available() {
+    command -v dovecot &>/dev/null && systemctl is-active --quiet dovecot 2>/dev/null
+}
+
+is_prometheus_available() {
+    # Check systemd service
+    systemctl is-active --quiet prometheus 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x prometheus &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi prometheus && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:9090/-/healthy" &>/dev/null && return 0
+    return 1
+}
+
+is_grafana_available() {
+    # Check systemd service
+    systemctl is-active --quiet grafana-server 2>/dev/null && return 0
+    # Check for running process
+    pgrep -f "grafana-server" &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi grafana && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:3000/api/health" &>/dev/null && return 0
+    return 1
+}
+
+is_loki_available() {
+    # Check systemd service
+    systemctl is-active --quiet loki 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x loki &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi loki && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:3100/ready" &>/dev/null && return 0
+    return 1
+}
+
+is_promtail_available() {
+    # Check systemd service
+    systemctl is-active --quiet promtail 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x promtail &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi promtail && return 0
+    return 1
+}
+
+is_node_exporter_available() {
+    # Check systemd service
+    systemctl is-active --quiet node_exporter 2>/dev/null && return 0
+    systemctl is-active --quiet prometheus-node-exporter 2>/dev/null && return 0
+    # Check for running process
+    pgrep -f "node_exporter" &>/dev/null && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:9100/metrics" &>/dev/null && return 0
+    return 1
+}
+
+is_alertmanager_available() {
+    # Check systemd service
+    systemctl is-active --quiet alertmanager 2>/dev/null && return 0
+    # Check for running process
+    pgrep -x alertmanager &>/dev/null && return 0
+    # Check for Docker container
+    docker ps --format '{{.Names}}' 2>/dev/null | grep -qi alertmanager && return 0
+    # Check if responding on default port
+    curl -s --connect-timeout 2 "http://127.0.0.1:9093/-/healthy" &>/dev/null && return 0
+    return 1
+}
+
 #######################################
 # Collect Nginx metrics
 # Requires: nginx with stub_status module enabled
@@ -2260,6 +2401,1007 @@ collect_wordops_metrics() {
 }
 
 #######################################
+# Collect PostgreSQL metrics
+#######################################
+
+collect_postgresql_metrics() {
+    if ! is_postgresql_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Check if psql is available
+    if ! command -v psql &>/dev/null; then
+        echo '{"available": true, "metrics_available": false, "reason": "psql not installed"}'
+        return 0
+    fi
+
+    # Build connection options
+    local psql_cmd="psql"
+    local use_sudo=false
+    local connected=false
+
+    # Try connecting as postgres user via sudo
+    if sudo -n -u postgres psql -c "SELECT 1" &>/dev/null 2>&1; then
+        use_sudo=true
+        connected=true
+    # Try direct connection (might work if peer auth configured)
+    elif psql -c "SELECT 1" &>/dev/null 2>&1; then
+        connected=true
+    fi
+
+    if [[ "$connected" != "true" ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "connection_failed"}'
+        return 0
+    fi
+
+    # Helper function
+    run_psql() {
+        if [[ "$use_sudo" == "true" ]]; then
+            sudo -n -u postgres psql -t -A -c "$1" 2>/dev/null
+        else
+            psql -t -A -c "$1" 2>/dev/null
+        fi
+    }
+
+    # Get connection stats
+    local max_connections active_connections idle_connections
+    max_connections=$(run_psql "SHOW max_connections;" | tr -d ' ')
+    active_connections=$(run_psql "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';" | tr -d ' ')
+    idle_connections=$(run_psql "SELECT count(*) FROM pg_stat_activity WHERE state = 'idle';" | tr -d ' ')
+    local total_connections=$((active_connections + idle_connections))
+
+    # Connection utilization
+    local conn_percent=0
+    if [[ $max_connections -gt 0 ]]; then
+        conn_percent=$(echo "scale=1; 100 * $total_connections / $max_connections" | bc)
+    fi
+
+    # Get database sizes
+    local total_size_bytes
+    total_size_bytes=$(run_psql "SELECT sum(pg_database_size(datname)) FROM pg_database WHERE datistemplate = false;" | tr -d ' ')
+    local total_size_mb=$((${total_size_bytes:-0} / 1024 / 1024))
+
+    # Get transaction stats
+    local commits rollbacks
+    commits=$(run_psql "SELECT sum(xact_commit) FROM pg_stat_database;" | tr -d ' ')
+    rollbacks=$(run_psql "SELECT sum(xact_rollback) FROM pg_stat_database;" | tr -d ' ')
+
+    # Get cache hit ratio
+    local cache_hit_ratio
+    cache_hit_ratio=$(run_psql "SELECT ROUND(100.0 * sum(blks_hit) / NULLIF(sum(blks_hit) + sum(blks_read), 0), 2) FROM pg_stat_database;" | tr -d ' ')
+
+    # Get replication status (if any)
+    local replication_lag=0
+    local is_replica="false"
+    if [[ $(run_psql "SELECT pg_is_in_recovery();" | tr -d ' ') == "t" ]]; then
+        is_replica="true"
+        replication_lag=$(run_psql "SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::int;" | tr -d ' ')
+    fi
+
+    # Get database count
+    local db_count
+    db_count=$(run_psql "SELECT count(*) FROM pg_database WHERE datistemplate = false;" | tr -d ' ')
+
+    # Get uptime
+    local uptime_seconds
+    uptime_seconds=$(run_psql "SELECT EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time()))::int;" | tr -d ' ')
+
+    # Get locks waiting
+    local waiting_locks
+    waiting_locks=$(run_psql "SELECT count(*) FROM pg_locks WHERE NOT granted;" | tr -d ' ')
+
+    jq -nc \
+        --arg avail "true" \
+        --arg maxconn "${max_connections:-0}" \
+        --arg activeconn "${active_connections:-0}" \
+        --arg idleconn "${idle_connections:-0}" \
+        --arg connpct "${conn_percent:-0}" \
+        --arg totalsize "${total_size_mb:-0}" \
+        --arg commits "${commits:-0}" \
+        --arg rollbacks "${rollbacks:-0}" \
+        --arg cachehit "${cache_hit_ratio:-0}" \
+        --arg replica "$is_replica" \
+        --arg replag "${replication_lag:-0}" \
+        --arg dbcount "${db_count:-0}" \
+        --arg uptime "${uptime_seconds:-0}" \
+        --arg locks "${waiting_locks:-0}" \
+        '{
+            available: true,
+            max_connections: ($maxconn | tonumber),
+            active_connections: ($activeconn | tonumber),
+            idle_connections: ($idleconn | tonumber),
+            connection_percent: ($connpct | tonumber),
+            total_size_mb: ($totalsize | tonumber),
+            transactions_committed: ($commits | tonumber),
+            transactions_rolled_back: ($rollbacks | tonumber),
+            cache_hit_ratio: ($cachehit | tonumber),
+            is_replica: ($replica | test("true")),
+            replication_lag_seconds: ($replag | tonumber),
+            database_count: ($dbcount | tonumber),
+            uptime_seconds: ($uptime | tonumber),
+            waiting_locks: ($locks | tonumber)
+        }'
+}
+
+#######################################
+# Collect Memcached metrics
+#######################################
+
+collect_memcached_metrics() {
+    if ! is_memcached_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Try to get stats via netcat or telnet
+    local stats=""
+    if command -v nc &>/dev/null; then
+        stats=$(echo "stats" | nc -q 1 127.0.0.1 11211 2>/dev/null || echo "")
+    elif command -v telnet &>/dev/null; then
+        stats=$(echo -e "stats\nquit" | timeout 2 telnet 127.0.0.1 11211 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$stats" ]] || [[ ! "$stats" =~ STAT ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "cannot connect to memcached"}'
+        return 0
+    fi
+
+    # Parse stats
+    local curr_connections max_connections bytes limit_maxbytes
+    local get_hits get_misses evictions uptime
+    local bytes_read bytes_written curr_items
+
+    curr_connections=$(echo "$stats" | awk '/STAT curr_connections/ {print $3}' | tr -d '\r')
+    max_connections=$(echo "$stats" | awk '/STAT max_connections/ {print $3}' | tr -d '\r')
+    bytes=$(echo "$stats" | awk '/STAT bytes / {print $3}' | tr -d '\r')
+    limit_maxbytes=$(echo "$stats" | awk '/STAT limit_maxbytes/ {print $3}' | tr -d '\r')
+    get_hits=$(echo "$stats" | awk '/STAT get_hits/ {print $3}' | tr -d '\r')
+    get_misses=$(echo "$stats" | awk '/STAT get_misses/ {print $3}' | tr -d '\r')
+    evictions=$(echo "$stats" | awk '/STAT evictions/ {print $3}' | tr -d '\r')
+    uptime=$(echo "$stats" | awk '/STAT uptime/ {print $3}' | tr -d '\r')
+    curr_items=$(echo "$stats" | awk '/STAT curr_items/ {print $3}' | tr -d '\r')
+
+    # Calculate hit ratio
+    local hit_ratio=0
+    local total_gets=$((${get_hits:-0} + ${get_misses:-0}))
+    if [[ $total_gets -gt 0 ]]; then
+        hit_ratio=$(echo "scale=2; 100 * ${get_hits:-0} / $total_gets" | bc)
+    fi
+
+    # Calculate memory usage percent
+    local mem_percent=0
+    if [[ ${limit_maxbytes:-0} -gt 0 ]]; then
+        mem_percent=$(echo "scale=1; 100 * ${bytes:-0} / ${limit_maxbytes:-0}" | bc)
+    fi
+
+    local mem_used_mb=$(( ${bytes:-0} / 1024 / 1024 ))
+    local mem_max_mb=$(( ${limit_maxbytes:-0} / 1024 / 1024 ))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg currconn "${curr_connections:-0}" \
+        --arg maxconn "${max_connections:-0}" \
+        --arg memused "$mem_used_mb" \
+        --arg memmax "$mem_max_mb" \
+        --arg mempct "${mem_percent:-0}" \
+        --arg hitratio "${hit_ratio:-0}" \
+        --arg evict "${evictions:-0}" \
+        --arg items "${curr_items:-0}" \
+        --arg uptime "${uptime:-0}" \
+        '{
+            available: true,
+            current_connections: ($currconn | tonumber),
+            max_connections: ($maxconn | tonumber),
+            memory_used_mb: ($memused | tonumber),
+            memory_max_mb: ($memmax | tonumber),
+            memory_percent: ($mempct | tonumber),
+            hit_ratio: ($hitratio | tonumber),
+            evictions: ($evict | tonumber),
+            items: ($items | tonumber),
+            uptime_seconds: ($uptime | tonumber)
+        }'
+}
+
+#######################################
+# Collect MongoDB metrics
+#######################################
+
+collect_mongodb_metrics() {
+    if ! is_mongodb_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Determine which client to use
+    local mongo_cmd=""
+    if command -v mongosh &>/dev/null; then
+        mongo_cmd="mongosh --quiet --eval"
+    elif command -v mongo &>/dev/null; then
+        mongo_cmd="mongo --quiet --eval"
+    else
+        echo '{"available": true, "metrics_available": false, "reason": "mongo client not installed"}'
+        return 0
+    fi
+
+    # Test connection
+    if ! $mongo_cmd "db.runCommand({ping: 1})" &>/dev/null 2>&1; then
+        echo '{"available": true, "metrics_available": false, "reason": "connection_failed"}'
+        return 0
+    fi
+
+    # Get server status
+    local server_status
+    server_status=$($mongo_cmd "JSON.stringify(db.serverStatus())" 2>/dev/null || echo "{}")
+
+    if [[ "$server_status" == "{}" ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "cannot get server status"}'
+        return 0
+    fi
+
+    # Parse using jq
+    local connections_current connections_available mem_resident mem_virtual
+    local opcounters_query opcounters_insert opcounters_update opcounters_delete
+    local uptime
+
+    connections_current=$(echo "$server_status" | jq -r '.connections.current // 0')
+    connections_available=$(echo "$server_status" | jq -r '.connections.available // 0')
+    mem_resident=$(echo "$server_status" | jq -r '.mem.resident // 0')
+    mem_virtual=$(echo "$server_status" | jq -r '.mem.virtual // 0')
+    opcounters_query=$(echo "$server_status" | jq -r '.opcounters.query // 0')
+    opcounters_insert=$(echo "$server_status" | jq -r '.opcounters.insert // 0')
+    opcounters_update=$(echo "$server_status" | jq -r '.opcounters.update // 0')
+    opcounters_delete=$(echo "$server_status" | jq -r '.opcounters.delete // 0')
+    uptime=$(echo "$server_status" | jq -r '.uptime // 0')
+
+    # Get database count and total size
+    local db_stats
+    db_stats=$($mongo_cmd "JSON.stringify(db.adminCommand({listDatabases: 1}))" 2>/dev/null || echo "{}")
+    local db_count total_size_mb
+    db_count=$(echo "$db_stats" | jq -r '.databases | length // 0')
+    total_size_mb=$(echo "$db_stats" | jq -r '(.totalSize // 0) / 1024 / 1024 | floor')
+
+    # Check replication status
+    local is_replica="false"
+    local repl_status
+    repl_status=$($mongo_cmd "JSON.stringify(rs.status())" 2>/dev/null || echo "{}")
+    if [[ $(echo "$repl_status" | jq -r '.ok // 0') == "1" ]]; then
+        is_replica="true"
+    fi
+
+    jq -nc \
+        --arg avail "true" \
+        --arg connscurr "$connections_current" \
+        --arg connsavail "$connections_available" \
+        --arg memres "$mem_resident" \
+        --arg memvirt "$mem_virtual" \
+        --arg opquery "$opcounters_query" \
+        --arg opinsert "$opcounters_insert" \
+        --arg opupdate "$opcounters_update" \
+        --arg opdelete "$opcounters_delete" \
+        --arg uptime "$uptime" \
+        --arg dbcount "$db_count" \
+        --arg totalsize "$total_size_mb" \
+        --arg replica "$is_replica" \
+        '{
+            available: true,
+            connections_current: ($connscurr | tonumber),
+            connections_available: ($connsavail | tonumber),
+            memory_resident_mb: ($memres | tonumber),
+            memory_virtual_mb: ($memvirt | tonumber),
+            ops_query: ($opquery | tonumber),
+            ops_insert: ($opinsert | tonumber),
+            ops_update: ($opupdate | tonumber),
+            ops_delete: ($opdelete | tonumber),
+            uptime_seconds: ($uptime | tonumber),
+            database_count: ($dbcount | tonumber),
+            total_size_mb: ($totalsize | tonumber),
+            is_replica_set: ($replica | test("true"))
+        }'
+}
+
+#######################################
+# Collect Elasticsearch metrics
+#######################################
+
+collect_elasticsearch_metrics() {
+    if ! is_elasticsearch_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local es_url="http://127.0.0.1:9200"
+
+    # Test connection and get cluster health
+    local cluster_health
+    cluster_health=$(curl -s --connect-timeout 5 "$es_url/_cluster/health" 2>/dev/null || echo "")
+
+    if [[ -z "$cluster_health" ]] || [[ ! "$cluster_health" =~ cluster_name ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "cannot connect"}'
+        return 0
+    fi
+
+    # Get node stats
+    local node_stats
+    node_stats=$(curl -s --connect-timeout 5 "$es_url/_nodes/stats" 2>/dev/null || echo "{}")
+
+    # Parse cluster health
+    local cluster_status num_nodes num_data_nodes active_shards relocating unassigned
+    cluster_status=$(echo "$cluster_health" | jq -r '.status // "unknown"')
+    num_nodes=$(echo "$cluster_health" | jq -r '.number_of_nodes // 0')
+    num_data_nodes=$(echo "$cluster_health" | jq -r '.number_of_data_nodes // 0')
+    active_shards=$(echo "$cluster_health" | jq -r '.active_shards // 0')
+    relocating=$(echo "$cluster_health" | jq -r '.relocating_shards // 0')
+    unassigned=$(echo "$cluster_health" | jq -r '.unassigned_shards // 0')
+
+    # Get first node's stats for memory and disk
+    local heap_used_mb heap_max_mb heap_percent disk_used_bytes disk_total_bytes
+    heap_used_mb=$(echo "$node_stats" | jq -r '[.nodes[].jvm.mem.heap_used_in_bytes][0] // 0' | awk '{print int($1/1024/1024)}')
+    heap_max_mb=$(echo "$node_stats" | jq -r '[.nodes[].jvm.mem.heap_max_in_bytes][0] // 0' | awk '{print int($1/1024/1024)}')
+    heap_percent=$(echo "$node_stats" | jq -r '[.nodes[].jvm.mem.heap_used_percent][0] // 0')
+
+    # Get indices stats
+    local indices_stats
+    indices_stats=$(curl -s --connect-timeout 5 "$es_url/_stats" 2>/dev/null || echo "{}")
+    local docs_count store_size_mb
+    docs_count=$(echo "$indices_stats" | jq -r '._all.primaries.docs.count // 0')
+    store_size_mb=$(echo "$indices_stats" | jq -r '._all.primaries.store.size_in_bytes // 0' | awk '{print int($1/1024/1024)}')
+
+    # Get index count
+    local index_count
+    index_count=$(curl -s --connect-timeout 5 "$es_url/_cat/indices?format=json" 2>/dev/null | jq -r 'length // 0')
+
+    jq -nc \
+        --arg avail "true" \
+        --arg status "$cluster_status" \
+        --arg nodes "$num_nodes" \
+        --arg datanodes "$num_data_nodes" \
+        --arg shards "$active_shards" \
+        --arg reloc "$relocating" \
+        --arg unassign "$unassigned" \
+        --arg heapused "$heap_used_mb" \
+        --arg heapmax "$heap_max_mb" \
+        --arg heappct "$heap_percent" \
+        --arg docs "$docs_count" \
+        --arg storesize "$store_size_mb" \
+        --arg indices "$index_count" \
+        '{
+            available: true,
+            cluster_status: $status,
+            nodes: ($nodes | tonumber),
+            data_nodes: ($datanodes | tonumber),
+            active_shards: ($shards | tonumber),
+            relocating_shards: ($reloc | tonumber),
+            unassigned_shards: ($unassign | tonumber),
+            heap_used_mb: ($heapused | tonumber),
+            heap_max_mb: ($heapmax | tonumber),
+            heap_percent: ($heappct | tonumber),
+            documents: ($docs | tonumber),
+            store_size_mb: ($storesize | tonumber),
+            index_count: ($indices | tonumber)
+        }'
+}
+
+#######################################
+# Collect RabbitMQ metrics
+#######################################
+
+collect_rabbitmq_metrics() {
+    if ! is_rabbitmq_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Check if rabbitmqctl is available
+    if ! command -v rabbitmqctl &>/dev/null; then
+        echo '{"available": true, "metrics_available": false, "reason": "rabbitmqctl not installed"}'
+        return 0
+    fi
+
+    # Try to get status (may need sudo)
+    local status=""
+    local use_sudo=false
+
+    if rabbitmqctl status &>/dev/null 2>&1; then
+        status=$(rabbitmqctl status 2>/dev/null)
+    elif sudo -n rabbitmqctl status &>/dev/null 2>&1; then
+        status=$(sudo -n rabbitmqctl status 2>/dev/null)
+        use_sudo=true
+    else
+        echo '{"available": true, "metrics_available": false, "reason": "cannot get status"}'
+        return 0
+    fi
+
+    # Helper function
+    run_rabbitmqctl() {
+        if [[ "$use_sudo" == "true" ]]; then
+            sudo -n rabbitmqctl "$@" 2>/dev/null
+        else
+            rabbitmqctl "$@" 2>/dev/null
+        fi
+    }
+
+    # Get overview via management API or rabbitmqctl
+    local total_connections=0
+    local total_channels=0
+    local total_queues=0
+    local messages_ready=0
+    local messages_unacked=0
+    local mem_used_mb=0
+
+    # Try management API first (if available)
+    local api_response
+    api_response=$(curl -s --connect-timeout 2 -u guest:guest "http://127.0.0.1:15672/api/overview" 2>/dev/null || echo "")
+
+    if [[ -n "$api_response" ]] && [[ "$api_response" =~ cluster_name ]]; then
+        total_connections=$(echo "$api_response" | jq -r '.object_totals.connections // 0')
+        total_channels=$(echo "$api_response" | jq -r '.object_totals.channels // 0')
+        total_queues=$(echo "$api_response" | jq -r '.object_totals.queues // 0')
+        messages_ready=$(echo "$api_response" | jq -r '.queue_totals.messages_ready // 0')
+        messages_unacked=$(echo "$api_response" | jq -r '.queue_totals.messages_unacknowledged // 0')
+        mem_used_mb=$(echo "$api_response" | jq -r '(.node_mem // 0) / 1024 / 1024 | floor')
+    else
+        # Fallback to rabbitmqctl
+        total_connections=$(run_rabbitmqctl list_connections 2>/dev/null | wc -l || echo "0")
+        total_queues=$(run_rabbitmqctl list_queues 2>/dev/null | wc -l || echo "0")
+
+        # Get memory from status
+        mem_used_mb=$(echo "$status" | grep -oP 'total,\K[0-9]+' | head -1 || echo "0")
+        mem_used_mb=$((mem_used_mb / 1024 / 1024))
+    fi
+
+    # Get consumers count
+    local consumers
+    consumers=$(run_rabbitmqctl list_consumers 2>/dev/null | wc -l || echo "0")
+
+    jq -nc \
+        --arg avail "true" \
+        --arg conns "$total_connections" \
+        --arg chans "$total_channels" \
+        --arg queues "$total_queues" \
+        --arg ready "$messages_ready" \
+        --arg unacked "$messages_unacked" \
+        --arg consumers "$consumers" \
+        --arg mem "$mem_used_mb" \
+        '{
+            available: true,
+            connections: ($conns | tonumber),
+            channels: ($chans | tonumber),
+            queues: ($queues | tonumber),
+            messages_ready: ($ready | tonumber),
+            messages_unacknowledged: ($unacked | tonumber),
+            consumers: ($consumers | tonumber),
+            memory_mb: ($mem | tonumber)
+        }'
+}
+
+#######################################
+# Collect Fail2ban metrics
+#######################################
+
+collect_fail2ban_metrics() {
+    if ! is_fail2ban_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local use_sudo=false
+    local status=""
+
+    if fail2ban-client status &>/dev/null 2>&1; then
+        status=$(fail2ban-client status 2>/dev/null)
+    elif sudo -n fail2ban-client status &>/dev/null 2>&1; then
+        status=$(sudo -n fail2ban-client status 2>/dev/null)
+        use_sudo=true
+    else
+        echo '{"available": true, "metrics_available": false, "reason": "cannot get status"}'
+        return 0
+    fi
+
+    # Helper
+    run_f2b() {
+        if [[ "$use_sudo" == "true" ]]; then
+            sudo -n fail2ban-client "$@" 2>/dev/null
+        else
+            fail2ban-client "$@" 2>/dev/null
+        fi
+    }
+
+    # Get jail list
+    local jails
+    jails=$(echo "$status" | grep "Jail list:" | sed 's/.*Jail list:\s*//' | tr -d '\t' | tr ',' '\n' | tr -d ' ')
+
+    local total_banned=0
+    local total_jails=0
+    local jail_details=()
+
+    for jail in $jails; do
+        [[ -z "$jail" ]] && continue
+        ((total_jails++))
+
+        local jail_status
+        jail_status=$(run_f2b status "$jail" 2>/dev/null)
+
+        local currently_banned
+        currently_banned=$(echo "$jail_status" | grep "Currently banned:" | awk '{print $NF}')
+        total_banned=$((total_banned + ${currently_banned:-0}))
+    done
+
+    jq -nc \
+        --arg avail "true" \
+        --arg jails "$total_jails" \
+        --arg banned "$total_banned" \
+        '{
+            available: true,
+            jails_active: ($jails | tonumber),
+            total_banned: ($banned | tonumber)
+        }'
+}
+
+#######################################
+# Collect Docker metrics
+#######################################
+
+collect_docker_metrics() {
+    if ! is_docker_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Get container counts
+    local running stopped total
+    running=$(docker ps -q 2>/dev/null | wc -l)
+    total=$(docker ps -a -q 2>/dev/null | wc -l)
+    stopped=$((total - running))
+
+    # Get containers with high restart counts
+    local high_restarts=0
+    while IFS= read -r restart_count; do
+        if [[ ${restart_count:-0} -gt 5 ]]; then
+            ((high_restarts++))
+        fi
+    done < <(docker ps --format '{{.Names}}' 2>/dev/null | while read name; do
+        docker inspect --format '{{.RestartCount}}' "$name" 2>/dev/null
+    done)
+
+    # Get unhealthy containers
+    local unhealthy
+    unhealthy=$(docker ps --filter "health=unhealthy" -q 2>/dev/null | wc -l)
+
+    # Get image count
+    local images
+    images=$(docker images -q 2>/dev/null | wc -l)
+
+    # Get disk usage (might need parsing)
+    local disk_usage_gb=0
+    local disk_output
+    disk_output=$(docker system df --format '{{.Size}}' 2>/dev/null | head -1 || echo "0")
+    if [[ "$disk_output" =~ ([0-9.]+)GB ]]; then
+        disk_usage_gb="${BASH_REMATCH[1]}"
+    elif [[ "$disk_output" =~ ([0-9.]+)MB ]]; then
+        disk_usage_gb=$(echo "scale=2; ${BASH_REMATCH[1]} / 1024" | bc)
+    fi
+
+    # Get volume count
+    local volumes
+    volumes=$(docker volume ls -q 2>/dev/null | wc -l)
+
+    # Get network count
+    local networks
+    networks=$(docker network ls -q 2>/dev/null | wc -l)
+
+    jq -nc \
+        --arg avail "true" \
+        --arg running "$running" \
+        --arg stopped "$stopped" \
+        --arg total "$total" \
+        --arg unhealthy "$unhealthy" \
+        --arg restarts "$high_restarts" \
+        --arg images "$images" \
+        --arg diskgb "$disk_usage_gb" \
+        --arg volumes "$volumes" \
+        --arg networks "$networks" \
+        '{
+            available: true,
+            containers_running: ($running | tonumber),
+            containers_stopped: ($stopped | tonumber),
+            containers_total: ($total | tonumber),
+            containers_unhealthy: ($unhealthy | tonumber),
+            containers_high_restarts: ($restarts | tonumber),
+            images: ($images | tonumber),
+            disk_usage_gb: ($diskgb | tonumber),
+            volumes: ($volumes | tonumber),
+            networks: ($networks | tonumber)
+        }'
+}
+
+#######################################
+# Collect Postfix metrics
+#######################################
+
+collect_postfix_metrics() {
+    if ! is_postfix_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    # Get queue counts
+    local queue_active=0
+    local queue_deferred=0
+    local queue_hold=0
+    local queue_incoming=0
+
+    if command -v mailq &>/dev/null; then
+        local mailq_output
+        mailq_output=$(mailq 2>/dev/null || sudo -n mailq 2>/dev/null || echo "")
+
+        if [[ "$mailq_output" =~ "Mail queue is empty" ]]; then
+            queue_active=0
+        else
+            queue_active=$(echo "$mailq_output" | grep -c "^[A-F0-9]" || echo "0")
+        fi
+    fi
+
+    # Try to get more detailed queue info
+    if command -v postqueue &>/dev/null; then
+        queue_deferred=$(find /var/spool/postfix/deferred -type f 2>/dev/null | wc -l || echo "0")
+        queue_active=$(find /var/spool/postfix/active -type f 2>/dev/null | wc -l || echo "0")
+        queue_hold=$(find /var/spool/postfix/hold -type f 2>/dev/null | wc -l || echo "0")
+        queue_incoming=$(find /var/spool/postfix/incoming -type f 2>/dev/null | wc -l || echo "0")
+    fi
+
+    local total_queue=$((queue_active + queue_deferred + queue_hold + queue_incoming))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg active "$queue_active" \
+        --arg deferred "$queue_deferred" \
+        --arg hold "$queue_hold" \
+        --arg incoming "$queue_incoming" \
+        --arg total "$total_queue" \
+        '{
+            available: true,
+            queue_active: ($active | tonumber),
+            queue_deferred: ($deferred | tonumber),
+            queue_hold: ($hold | tonumber),
+            queue_incoming: ($incoming | tonumber),
+            queue_total: ($total | tonumber)
+        }'
+}
+
+#######################################
+# Collect Dovecot metrics
+#######################################
+
+collect_dovecot_metrics() {
+    if ! is_dovecot_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local use_sudo=false
+
+    # Check if we can run doveadm
+    if ! command -v doveadm &>/dev/null; then
+        echo '{"available": true, "metrics_available": false, "reason": "doveadm not installed"}'
+        return 0
+    fi
+
+    # Try to get stats
+    local stats=""
+    if doveadm stats dump 2>/dev/null | head -1 &>/dev/null; then
+        stats=$(doveadm stats dump 2>/dev/null)
+    elif sudo -n doveadm stats dump 2>/dev/null | head -1 &>/dev/null; then
+        stats=$(sudo -n doveadm stats dump 2>/dev/null)
+        use_sudo=true
+    fi
+
+    # Get connection counts
+    local imap_connections=0
+    local pop3_connections=0
+
+    if [[ "$use_sudo" == "true" ]]; then
+        imap_connections=$(sudo -n doveadm who -1 2>/dev/null | grep -c "imap" || echo "0")
+        pop3_connections=$(sudo -n doveadm who -1 2>/dev/null | grep -c "pop3" || echo "0")
+    else
+        imap_connections=$(doveadm who -1 2>/dev/null | grep -c "imap" || echo "0")
+        pop3_connections=$(doveadm who -1 2>/dev/null | grep -c "pop3" || echo "0")
+    fi
+
+    local total_connections=$((imap_connections + pop3_connections))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg imap "$imap_connections" \
+        --arg pop3 "$pop3_connections" \
+        --arg total "$total_connections" \
+        '{
+            available: true,
+            imap_connections: ($imap | tonumber),
+            pop3_connections: ($pop3 | tonumber),
+            total_connections: ($total | tonumber)
+        }'
+}
+
+#######################################
+# Collect Prometheus metrics
+#######################################
+
+collect_prometheus_metrics() {
+    if ! is_prometheus_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local prom_url="http://127.0.0.1:9090"
+
+    # Check health
+    local health
+    health=$(curl -s --connect-timeout 5 "$prom_url/-/healthy" 2>/dev/null || echo "")
+
+    if [[ "$health" != "Prometheus Server is Healthy." ]] && [[ "$health" != "OK" ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "health check failed"}'
+        return 0
+    fi
+
+    # Get runtime info
+    local runtime_info
+    runtime_info=$(curl -s --connect-timeout 5 "$prom_url/api/v1/status/runtimeinfo" 2>/dev/null || echo "{}")
+
+    # Get TSDB stats
+    local tsdb_stats
+    tsdb_stats=$(curl -s --connect-timeout 5 "$prom_url/api/v1/status/tsdb" 2>/dev/null || echo "{}")
+
+    # Get targets
+    local targets
+    targets=$(curl -s --connect-timeout 5 "$prom_url/api/v1/targets" 2>/dev/null || echo "{}")
+
+    # Parse values
+    local storage_retention uptime_seconds
+    storage_retention=$(echo "$runtime_info" | jq -r '.data.storageRetention // "unknown"')
+    uptime_seconds=$(echo "$runtime_info" | jq -r '.data.startTime // ""' | xargs -I {} date -d {} +%s 2>/dev/null || echo "0")
+    if [[ -n "$uptime_seconds" ]] && [[ "$uptime_seconds" != "0" ]]; then
+        uptime_seconds=$(($(date +%s) - uptime_seconds))
+    fi
+
+    local head_series head_chunks
+    head_series=$(echo "$tsdb_stats" | jq -r '.data.headStats.numSeries // 0')
+    head_chunks=$(echo "$tsdb_stats" | jq -r '.data.headStats.numChunks // 0')
+
+    # Count targets
+    local active_targets down_targets
+    active_targets=$(echo "$targets" | jq -r '[.data.activeTargets[]] | length // 0')
+    down_targets=$(echo "$targets" | jq -r '[.data.activeTargets[] | select(.health != "up")] | length // 0')
+
+    # Get alerting rules count
+    local rules
+    rules=$(curl -s --connect-timeout 5 "$prom_url/api/v1/rules" 2>/dev/null || echo "{}")
+    local total_rules firing_alerts
+    total_rules=$(echo "$rules" | jq -r '[.data.groups[].rules[]] | length // 0')
+    firing_alerts=$(echo "$rules" | jq -r '[.data.groups[].rules[] | select(.state == "firing")] | length // 0')
+
+    jq -nc \
+        --arg avail "true" \
+        --arg retention "$storage_retention" \
+        --arg uptime "${uptime_seconds:-0}" \
+        --arg series "$head_series" \
+        --arg chunks "$head_chunks" \
+        --arg targets "$active_targets" \
+        --arg down "$down_targets" \
+        --arg rules "$total_rules" \
+        --arg firing "$firing_alerts" \
+        '{
+            available: true,
+            storage_retention: $retention,
+            uptime_seconds: ($uptime | tonumber),
+            head_series: ($series | tonumber),
+            head_chunks: ($chunks | tonumber),
+            active_targets: ($targets | tonumber),
+            down_targets: ($down | tonumber),
+            total_rules: ($rules | tonumber),
+            firing_alerts: ($firing | tonumber)
+        }'
+}
+
+#######################################
+# Collect Grafana metrics
+#######################################
+
+collect_grafana_metrics() {
+    if ! is_grafana_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local grafana_url="http://127.0.0.1:3000"
+    local api_key=""
+
+    # Try to find API key from common secret locations
+    for secret_file in /etc/grafana/api_key /etc/grafana/secrets/api_key /var/lib/grafana/api_key ~/.grafana_api_key; do
+        if [[ -r "$secret_file" ]]; then
+            api_key=$(cat "$secret_file" 2>/dev/null | tr -d '\n')
+            break
+        fi
+    done
+
+    # Check health (doesn't require auth)
+    local health
+    health=$(curl -s --connect-timeout 5 "$grafana_url/api/health" 2>/dev/null || echo "{}")
+
+    if [[ ! "$health" =~ database ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "health check failed"}'
+        return 0
+    fi
+
+    local db_status version
+    db_status=$(echo "$health" | jq -r '.database // "unknown"')
+    version=$(echo "$health" | jq -r '.version // "unknown"')
+
+    # Try to get more stats with API key if available
+    local dashboards=0
+    local datasources=0
+    local users=0
+    local orgs=0
+
+    if [[ -n "$api_key" ]]; then
+        local auth_header="Authorization: Bearer $api_key"
+
+        # Get dashboard count
+        local search_result
+        search_result=$(curl -s --connect-timeout 5 -H "$auth_header" "$grafana_url/api/search?type=dash-db" 2>/dev/null || echo "[]")
+        dashboards=$(echo "$search_result" | jq -r 'length // 0')
+
+        # Get datasources count
+        local ds_result
+        ds_result=$(curl -s --connect-timeout 5 -H "$auth_header" "$grafana_url/api/datasources" 2>/dev/null || echo "[]")
+        datasources=$(echo "$ds_result" | jq -r 'length // 0')
+
+        # Get users count (admin only)
+        local users_result
+        users_result=$(curl -s --connect-timeout 5 -H "$auth_header" "$grafana_url/api/org/users" 2>/dev/null || echo "[]")
+        users=$(echo "$users_result" | jq -r 'length // 0')
+    fi
+
+    jq -nc \
+        --arg avail "true" \
+        --arg db "$db_status" \
+        --arg ver "$version" \
+        --arg dash "$dashboards" \
+        --arg ds "$datasources" \
+        --arg users "$users" \
+        '{
+            available: true,
+            database_status: $db,
+            version: $ver,
+            dashboards: ($dash | tonumber),
+            datasources: ($ds | tonumber),
+            users: ($users | tonumber)
+        }'
+}
+
+#######################################
+# Collect Loki metrics
+#######################################
+
+collect_loki_metrics() {
+    if ! is_loki_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local loki_url="http://127.0.0.1:3100"
+
+    # Check ready status
+    local ready
+    ready=$(curl -s --connect-timeout 5 "$loki_url/ready" 2>/dev/null || echo "")
+
+    if [[ "$ready" != "ready" ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "not ready"}'
+        return 0
+    fi
+
+    # Get metrics
+    local metrics
+    metrics=$(curl -s --connect-timeout 5 "$loki_url/metrics" 2>/dev/null || echo "")
+
+    # Parse key metrics
+    local ingester_streams=0
+    local ingester_chunks=0
+    local distributor_bytes_received=0
+
+    if [[ -n "$metrics" ]]; then
+        ingester_streams=$(echo "$metrics" | grep "^loki_ingester_streams_created_total" | awk '{sum+=$2} END {print sum+0}')
+        ingester_chunks=$(echo "$metrics" | grep "^loki_ingester_chunks_stored_total" | awk '{sum+=$2} END {print sum+0}')
+        distributor_bytes_received=$(echo "$metrics" | grep "^loki_distributor_bytes_received_total" | awk '{sum+=$2} END {print sum+0}')
+    fi
+
+    # Get build info
+    local build_info
+    build_info=$(curl -s --connect-timeout 5 "$loki_url/loki/api/v1/status/buildinfo" 2>/dev/null || echo "{}")
+    local version
+    version=$(echo "$build_info" | jq -r '.version // "unknown"')
+
+    local bytes_mb=$((${distributor_bytes_received:-0} / 1024 / 1024))
+
+    jq -nc \
+        --arg avail "true" \
+        --arg ver "$version" \
+        --arg streams "${ingester_streams:-0}" \
+        --arg chunks "${ingester_chunks:-0}" \
+        --arg bytesmb "$bytes_mb" \
+        '{
+            available: true,
+            version: $ver,
+            streams_created: ($streams | tonumber),
+            chunks_stored: ($chunks | tonumber),
+            bytes_received_mb: ($bytesmb | tonumber)
+        }'
+}
+
+#######################################
+# Collect Alertmanager metrics
+#######################################
+
+collect_alertmanager_metrics() {
+    if ! is_alertmanager_available; then
+        echo '{"available": false}'
+        return 0
+    fi
+
+    local am_url="http://127.0.0.1:9093"
+
+    # Check health
+    local health
+    health=$(curl -s --connect-timeout 5 "$am_url/-/healthy" 2>/dev/null || echo "")
+
+    if [[ "$health" != "OK" ]]; then
+        echo '{"available": true, "metrics_available": false, "reason": "health check failed"}'
+        return 0
+    fi
+
+    # Get status
+    local status
+    status=$(curl -s --connect-timeout 5 "$am_url/api/v2/status" 2>/dev/null || echo "{}")
+
+    # Get alerts
+    local alerts
+    alerts=$(curl -s --connect-timeout 5 "$am_url/api/v2/alerts" 2>/dev/null || echo "[]")
+
+    # Get silences
+    local silences
+    silences=$(curl -s --connect-timeout 5 "$am_url/api/v2/silences" 2>/dev/null || echo "[]")
+
+    # Parse values
+    local cluster_status uptime version
+    cluster_status=$(echo "$status" | jq -r '.cluster.status // "unknown"')
+    uptime=$(echo "$status" | jq -r '.uptime // "0s"')
+    version=$(echo "$status" | jq -r '.versionInfo.version // "unknown"')
+
+    local active_alerts suppressed_alerts active_silences
+    active_alerts=$(echo "$alerts" | jq -r '[.[] | select(.status.state == "active")] | length // 0')
+    suppressed_alerts=$(echo "$alerts" | jq -r '[.[] | select(.status.state == "suppressed")] | length // 0')
+    active_silences=$(echo "$silences" | jq -r '[.[] | select(.status.state == "active")] | length // 0')
+
+    jq -nc \
+        --arg avail "true" \
+        --arg ver "$version" \
+        --arg cluster "$cluster_status" \
+        --arg uptime "$uptime" \
+        --arg active "$active_alerts" \
+        --arg suppressed "$suppressed_alerts" \
+        --arg silences "$active_silences" \
+        '{
+            available: true,
+            version: $ver,
+            cluster_status: $cluster,
+            uptime: $uptime,
+            active_alerts: ($active | tonumber),
+            suppressed_alerts: ($suppressed | tonumber),
+            active_silences: ($silences | tonumber)
+        }'
+}
+
+#######################################
 # Analyze WordOps/PHP-FPM metrics
 #######################################
 
@@ -2389,6 +3531,7 @@ generate_json_output() {
     local timestamp hostname status score
     local cpu_json mem_json disk_json net_json svc_json rca_json
     local nginx_json apache_json mysql_json redis_json wordops_json
+    local extended_services_json
 
     timestamp="$1"
     hostname="$2"
@@ -2405,6 +3548,7 @@ generate_json_output() {
     mysql_json="${13:-{\}}"
     redis_json="${14:-{\}}"
     wordops_json="${15:-{\}}"
+    extended_services_json="${16:-{\}}"
 
     # S8: Deduplicate recommendations before output
     deduplicate_recommendations
@@ -2438,11 +3582,12 @@ generate_json_output() {
         --argjson mysql "$mysql_json" \
         --argjson redis "$redis_json" \
         --argjson wordops "$wordops_json" \
+        --argjson extended "$extended_services_json" \
         --argjson alerts "$alerts_json" \
         --argjson recs "$recs_json" \
         --argjson rca "$rca_json" \
         '{
-            schema_version: "2.0.0",
+            schema_version: "2.2.0",
             script_version: $ver,
             timestamp: $ts,
             hostname: $host,
@@ -2458,7 +3603,8 @@ generate_json_output() {
                 apache: $apache,
                 mysql: $mysql,
                 redis: $redis,
-                wordops: $wordops
+                wordops: $wordops,
+                extended: $extended
             },
             alerts: $alerts,
             recommendations: $recs,
@@ -3348,6 +4494,133 @@ main() {
         fi
     fi
 
+    # Collect extended services (v2.2.0)
+    log_info "Collecting extended service metrics..."
+    local postgresql_json='{"available": false}'
+    local memcached_json='{"available": false}'
+    local mongodb_json='{"available": false}'
+    local elasticsearch_json='{"available": false}'
+    local rabbitmq_json='{"available": false}'
+    local fail2ban_json='{"available": false}'
+    local docker_json='{"available": false}'
+    local postfix_json='{"available": false}'
+    local dovecot_json='{"available": false}'
+    local prometheus_json='{"available": false}'
+    local grafana_json='{"available": false}'
+    local loki_json='{"available": false}'
+    local alertmanager_json='{"available": false}'
+
+    # Create temp directory for parallel collection
+    local ext_temp_dir
+    ext_temp_dir=$(mktemp -d 2>/dev/null) || ext_temp_dir=""
+
+    if [[ -n "$ext_temp_dir" ]]; then
+        # Launch parallel collection for extended services
+        (collect_postgresql_metrics 2>/dev/null > "$ext_temp_dir/postgresql.json" || echo '{"available": false}' > "$ext_temp_dir/postgresql.json") &
+        local pid_pg=$!
+        (collect_memcached_metrics 2>/dev/null > "$ext_temp_dir/memcached.json" || echo '{"available": false}' > "$ext_temp_dir/memcached.json") &
+        local pid_mc=$!
+        (collect_mongodb_metrics 2>/dev/null > "$ext_temp_dir/mongodb.json" || echo '{"available": false}' > "$ext_temp_dir/mongodb.json") &
+        local pid_mongo=$!
+        (collect_elasticsearch_metrics 2>/dev/null > "$ext_temp_dir/elasticsearch.json" || echo '{"available": false}' > "$ext_temp_dir/elasticsearch.json") &
+        local pid_es=$!
+        (collect_rabbitmq_metrics 2>/dev/null > "$ext_temp_dir/rabbitmq.json" || echo '{"available": false}' > "$ext_temp_dir/rabbitmq.json") &
+        local pid_rmq=$!
+        (collect_fail2ban_metrics 2>/dev/null > "$ext_temp_dir/fail2ban.json" || echo '{"available": false}' > "$ext_temp_dir/fail2ban.json") &
+        local pid_f2b=$!
+        (collect_docker_metrics 2>/dev/null > "$ext_temp_dir/docker.json" || echo '{"available": false}' > "$ext_temp_dir/docker.json") &
+        local pid_docker=$!
+        (collect_postfix_metrics 2>/dev/null > "$ext_temp_dir/postfix.json" || echo '{"available": false}' > "$ext_temp_dir/postfix.json") &
+        local pid_postfix=$!
+        (collect_dovecot_metrics 2>/dev/null > "$ext_temp_dir/dovecot.json" || echo '{"available": false}' > "$ext_temp_dir/dovecot.json") &
+        local pid_dovecot=$!
+        (collect_prometheus_metrics 2>/dev/null > "$ext_temp_dir/prometheus.json" || echo '{"available": false}' > "$ext_temp_dir/prometheus.json") &
+        local pid_prom=$!
+        (collect_grafana_metrics 2>/dev/null > "$ext_temp_dir/grafana.json" || echo '{"available": false}' > "$ext_temp_dir/grafana.json") &
+        local pid_grafana=$!
+        (collect_loki_metrics 2>/dev/null > "$ext_temp_dir/loki.json" || echo '{"available": false}' > "$ext_temp_dir/loki.json") &
+        local pid_loki=$!
+        (collect_alertmanager_metrics 2>/dev/null > "$ext_temp_dir/alertmanager.json" || echo '{"available": false}' > "$ext_temp_dir/alertmanager.json") &
+        local pid_am=$!
+
+        # Wait for extended services with timeout
+        local ext_timeout=15
+        local ext_waited=0
+        local ext_pids="$pid_pg $pid_mc $pid_mongo $pid_es $pid_rmq $pid_f2b $pid_docker $pid_postfix $pid_dovecot $pid_prom $pid_grafana $pid_loki $pid_am"
+
+        while (( ext_waited < ext_timeout )); do
+            local ext_all_done=true
+            for pid in $ext_pids; do
+                if kill -0 "$pid" 2>/dev/null; then
+                    ext_all_done=false
+                    break
+                fi
+            done
+            if $ext_all_done; then
+                break
+            fi
+            sleep 0.5
+            ((ext_waited++)) || true
+        done
+
+        # Kill remaining and suppress messages
+        for pid in $ext_pids; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+                wait "$pid" 2>/dev/null || true
+            fi
+        done
+
+        # Read results
+        postgresql_json=$(cat "$ext_temp_dir/postgresql.json" 2>/dev/null || echo '{"available": false}')
+        memcached_json=$(cat "$ext_temp_dir/memcached.json" 2>/dev/null || echo '{"available": false}')
+        mongodb_json=$(cat "$ext_temp_dir/mongodb.json" 2>/dev/null || echo '{"available": false}')
+        elasticsearch_json=$(cat "$ext_temp_dir/elasticsearch.json" 2>/dev/null || echo '{"available": false}')
+        rabbitmq_json=$(cat "$ext_temp_dir/rabbitmq.json" 2>/dev/null || echo '{"available": false}')
+        fail2ban_json=$(cat "$ext_temp_dir/fail2ban.json" 2>/dev/null || echo '{"available": false}')
+        docker_json=$(cat "$ext_temp_dir/docker.json" 2>/dev/null || echo '{"available": false}')
+        postfix_json=$(cat "$ext_temp_dir/postfix.json" 2>/dev/null || echo '{"available": false}')
+        dovecot_json=$(cat "$ext_temp_dir/dovecot.json" 2>/dev/null || echo '{"available": false}')
+        prometheus_json=$(cat "$ext_temp_dir/prometheus.json" 2>/dev/null || echo '{"available": false}')
+        grafana_json=$(cat "$ext_temp_dir/grafana.json" 2>/dev/null || echo '{"available": false}')
+        loki_json=$(cat "$ext_temp_dir/loki.json" 2>/dev/null || echo '{"available": false}')
+        alertmanager_json=$(cat "$ext_temp_dir/alertmanager.json" 2>/dev/null || echo '{"available": false}')
+
+        rm -rf "$ext_temp_dir"
+    fi
+
+    # Build extended services JSON object
+    local extended_services_json
+    extended_services_json=$(jq -nc \
+        --argjson postgresql "$postgresql_json" \
+        --argjson memcached "$memcached_json" \
+        --argjson mongodb "$mongodb_json" \
+        --argjson elasticsearch "$elasticsearch_json" \
+        --argjson rabbitmq "$rabbitmq_json" \
+        --argjson fail2ban "$fail2ban_json" \
+        --argjson docker "$docker_json" \
+        --argjson postfix "$postfix_json" \
+        --argjson dovecot "$dovecot_json" \
+        --argjson prometheus "$prometheus_json" \
+        --argjson grafana "$grafana_json" \
+        --argjson loki "$loki_json" \
+        --argjson alertmanager "$alertmanager_json" \
+        '{
+            postgresql: $postgresql,
+            memcached: $memcached,
+            mongodb: $mongodb,
+            elasticsearch: $elasticsearch,
+            rabbitmq: $rabbitmq,
+            fail2ban: $fail2ban,
+            docker: $docker,
+            postfix: $postfix,
+            dovecot: $dovecot,
+            prometheus: $prometheus,
+            grafana: $grafana,
+            loki: $loki,
+            alertmanager: $alertmanager
+        }')
+
     # Analyze metrics and calculate scores
     log_info "Analyzing metrics..."
 
@@ -3442,7 +4715,8 @@ main() {
     local json_output
     json_output=$(generate_json_output "$timestamp" "$hostname" "$health_status" "$health_score" \
         "$cpu_json" "$mem_json" "$disk_json" "$net_json" "$svc_json" "$rca_json" \
-        "$nginx_json" "$apache_json" "$mysql_json" "$redis_json" "$wordops_json")
+        "$nginx_json" "$apache_json" "$mysql_json" "$redis_json" "$wordops_json" \
+        "$extended_services_json")
 
     # Output based on format
     local output
