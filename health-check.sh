@@ -17,6 +17,16 @@ readonly SCRIPT_VERSION="2.2.0"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly SCRIPT_NAME
 
+# Auto-discovery module
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/lib/auto-discovery.sh" ]]; then
+    # shellcheck source=lib/auto-discovery.sh
+    source "$SCRIPT_DIR/lib/auto-discovery.sh"
+    AUTO_DISCOVERY_AVAILABLE=true
+else
+    AUTO_DISCOVERY_AVAILABLE=false
+fi
+
 # Thresholds - CPU
 readonly CPU_LOAD_WARNING=70
 readonly CPU_LOAD_CRITICAL=90
@@ -139,6 +149,8 @@ QUIET_MODE=false
 SCORE_ONLY=false
 NO_COLOR=false
 DEBUG_MODE=false
+ENABLE_AUTO_DISCOVERY=false
+ENABLE_AUTO_HEALING=false
 
 # Auto-healing configuration (disabled by default for safety)
 HEALING_ENABLED="${HEALING_ENABLED:-false}"
@@ -4009,6 +4021,8 @@ OPTIONS:
     --no-color                  Disable colored output
     --debug                     Enable debug logging
     --check-prerequisites       Verify all dependencies and configuration
+    --auto-discover             Enable auto-discovery of unknown components
+    --auto-heal                 Enable auto-healing (with user prompts)
 
 EXIT CODES:
     0   System healthy (score >= 80)
@@ -4375,6 +4389,14 @@ main() {
                 check_prerequisites
                 exit $?
                 ;;
+            --auto-discover)
+                ENABLE_AUTO_DISCOVERY=true
+                shift
+                ;;
+            --auto-heal)
+                ENABLE_AUTO_HEALING=true
+                shift
+                ;;
             *)
                 log_error "Unknown option: $1"
                 show_help
@@ -4620,6 +4642,50 @@ main() {
         rm -rf "$ext_temp_dir"
     fi
 
+    # Collect auto-discovered components (if enabled)
+    local discovered_components_json='{"available": false}'
+    if [[ "$ENABLE_AUTO_DISCOVERY" == "true" ]] && [[ "$AUTO_DISCOVERY_AVAILABLE" == "true" ]]; then
+        log_info "Running auto-discovery for unknown components..."
+
+        # Export flags for auto-discovery module
+        export AUTOHEALING_ENABLED="$ENABLE_AUTO_HEALING"
+        export AUTOHEALING_ASK_USER=true
+
+        # Run discovery and monitoring
+        local discovered_raw
+        if discovered_raw=$(discover_all_components 2>/dev/null); then
+            local monitored_components
+            if monitored_components=$(monitor_all_discovered_components 2>/dev/null); then
+                local component_count
+                component_count=$(echo "$monitored_components" | jq 'length')
+
+                log_info "Discovered and monitoring $component_count components"
+
+                # Check for unhealthy components and attempt healing if enabled
+                if [[ "$ENABLE_AUTO_HEALING" == "true" ]]; then
+                    local unhealthy_components
+                    unhealthy_components=$(echo "$monitored_components" | jq -c '.[] | select(.monitoring.status == "unhealthy")')
+
+                    if [[ -n "$unhealthy_components" ]]; then
+                        log_info "Found unhealthy discovered components, attempting auto-healing..."
+                        while IFS= read -r component; do
+                            attempt_autohealing "$component" || true
+                        done <<< "$unhealthy_components"
+                    fi
+                fi
+
+                discovered_components_json=$(jq -nc \
+                    --argjson components "$monitored_components" \
+                    --argjson count "$component_count" \
+                    '{
+                        available: true,
+                        component_count: $count,
+                        components: $components
+                    }')
+            fi
+        fi
+    fi
+
     # Build extended services JSON object
     local extended_services_json
     extended_services_json=$(jq -nc \
@@ -4636,6 +4702,7 @@ main() {
         --argjson grafana "$grafana_json" \
         --argjson loki "$loki_json" \
         --argjson alertmanager "$alertmanager_json" \
+        --argjson discovered "$discovered_components_json" \
         '{
             postgresql: $postgresql,
             memcached: $memcached,
@@ -4649,7 +4716,8 @@ main() {
             prometheus: $prometheus,
             grafana: $grafana,
             loki: $loki,
-            alertmanager: $alertmanager
+            alertmanager: $alertmanager,
+            auto_discovered: $discovered
         }')
 
     # Analyze metrics and calculate scores

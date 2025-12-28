@@ -79,7 +79,17 @@ The game-changer:
 - **JSON**: Perfect for automation and APIs
 - **Quiet Mode**: Just exit codes for scripts
 
-### 5. **Zero Configuration**
+### 5. **Auto-Discovery & Dynamic Monitoring** 🆕
+Automatically discovers and monitors unknown components:
+- Detects systemd services, Docker containers, network services
+- Monitors discovered components with health checks
+- Suggests logrotate configurations for discovered log files
+- Auto-healing with user confirmation for unhealthy components
+- Works on ANY host - no hardcoded service list!
+
+[Learn more about Auto-Discovery →](docs/AUTO-DISCOVERY.md)
+
+### 6. **Zero Configuration**
 Works out of the box with smart defaults
 
 ---
@@ -251,7 +261,42 @@ DISK_USAGE_CRITICAL=90
 
 # Show help
 ./health-check.sh --help
+
+# Auto-discover unknown components (NEW!)
+./health-check.sh --auto-discover
+
+# Auto-discover with auto-healing
+./health-check.sh --auto-discover --auto-heal
 ```
+
+### Auto-Discovery Management
+
+Standalone tool for managing discovered components:
+
+```bash
+# Discover all components
+./bin/component-discovery.sh discover
+
+# List discovered components
+./bin/component-discovery.sh list
+
+# Monitor discovered components
+./bin/component-discovery.sh monitor
+
+# Show detailed info about a component
+./bin/component-discovery.sh show nginx
+
+# Heal unhealthy components (with confirmation)
+./bin/component-discovery.sh heal-all
+
+# Check logrotate configuration
+./bin/component-discovery.sh logrotate-check
+
+# Get discovery statistics
+./bin/component-discovery.sh stats
+```
+
+[Full Auto-Discovery Documentation →](docs/AUTO-DISCOVERY.md)
 
 ### Historical Trending
 
