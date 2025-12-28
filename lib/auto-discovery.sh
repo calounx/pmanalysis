@@ -186,9 +186,9 @@ discover_running_processes() {
 
     # Get all running processes (exclude kernel threads and common system processes)
     while IFS= read -r line; do
-        local pid=$(echo "$line" | awk '{print $1}')
-        local cmd=$(echo "$line" | awk '{$1=$2=$3=$4=""; print $0}' | xargs)
-        local user=$(echo "$line" | awk '{print $2}')
+        local user=$(echo "$line" | awk '{print $1}')
+        local pid=$(echo "$line" | awk '{print $2}')
+        local cmd=$(echo "$line" | awk '{$1=$2=$3=$4=$5=$6=$7=$8=$9=$10=""; print $0}' | xargs)
 
         # Skip system processes
         if [[ "$user" == "root" ]] && [[ "$cmd" =~ ^\[.*\]$ ]]; then
@@ -196,7 +196,7 @@ discover_running_processes() {
         fi
 
         # Extract process name
-        local proc_name=$(basename "$(echo "$cmd" | awk '{print $1}')")
+        local proc_name=$(basename -- "$(echo "$cmd" | awk '{print $1}')" 2>/dev/null || echo "unknown")
 
         # Try to identify component type
         local component_type="unknown"
